@@ -22,8 +22,6 @@ jobs:
           workspaces: "contract -> target"
 
       - name: Run Cargo Test
-        env:
-          RUSTFLAGS: "--cfg feature=\"testutils\""
         run: cargo test --features testutils
         working-directory: ./contract
 
