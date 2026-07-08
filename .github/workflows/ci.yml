@@ -22,7 +22,7 @@ jobs:
           workspaces: "contract -> target"
 
       - name: Run Cargo Test
-        run: cargo test
+        run: cargo test --features testutils
         working-directory: ./contract
 
 
