@@ -1,4 +1,4 @@
-name: Rust
+name: Rust CI
 
 on:
   push:
@@ -11,12 +11,21 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --verbose
+        working-directory: ./contract
+
+      - name: Run tests
+        env:
+          RUSTFLAGS: "--cfg feature=\"testutils\""
+        run: cargo test --verbose
+        working-directory: ./contract
