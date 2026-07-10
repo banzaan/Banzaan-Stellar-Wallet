@@ -67,8 +67,9 @@ function App() {
       setBalance(Number(bal).toFixed(2));
       setIsModalOpen(false);
     } catch (e) {
-      console.error(e);
-      setError("Wallet connection failed.");
+      //console.error(e);
+      //setError("Wallet connection failed.");
+      setError(`Error: ${e.message || e}`);
     }
   };
 
