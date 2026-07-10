@@ -2,7 +2,8 @@ import './App.css';
 import Header from './components/Header';
 import { useState, useEffect, createContext } from 'react';
 import { Horizon, TransactionBuilder, Networks, Asset, Operation, BASE_FEE, TimeoutInfinite, Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
-import { StellarWalletsKit, WalletNetwork } from "@creit.tech/stellar-wallets-kit";
+import { signTransaction } from '@stellar/freighter-api';
+import { checkConnection, retrievePublicKey, getBalance } from "./components/Freighter";
 
 const pubKeyData = createContext();
 const server = new Horizon.Server("https://horizon-testnet.stellar.org");
@@ -10,12 +11,6 @@ const server = new Horizon.Server("https://horizon-testnet.stellar.org");
 const CONTRACT_ID = 'CC3I5V57TQDFKK3CFIOHC3RYXHRG4WPRLHFZC6VHRZEFRRWM4XWHWOGC'; 
 const sorobanRpc = new rpc.Server('https://soroban-testnet.stellar.org');
 const networkPassphrase = 'Test SDF Network ; September 2015';
-
-// Initialize the Multi-Wallet Kit correctly for newer package standards
-const kit = new StellarWalletsKit({
-  network: WalletNetwork.TESTNET,
-  allowMultiWallet: true
-});
 
 function App() {
   const [pubKey, _setPubKey] = useState("");
@@ -26,6 +21,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   
+  // Feedback States
   const [feedbackInput, setFeedbackInput] = useState("");
   const [userName, setUserName] = useState("");
   const [feedbacks, setFeedbacks] = useState([]);
@@ -35,6 +31,7 @@ function App() {
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [copiedTxIndex, setCopiedTxIndex] = useState(null);
 
+  // Search States (Modified for ID Search)
   const [searchId, setSearchId] = useState("");
   const [searchResult, setSearchResult] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -42,7 +39,6 @@ function App() {
   useEffect(() => {
     if (pubKey) {
       fetchTransactionHistory(pubKey);
-      fetchBalanceAfterTx(pubKey);
     } else {
       setBalance("0");
       setTransactions([]);
@@ -56,35 +52,31 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubKey]);
 
-  // FIX: Using kit.connect() with direct target IDs to support latest standard signatures
-  const handleConnectWallet = async (walletId) => {
+  const handleConnectFreighter = async () => {
     try {
-      setError("");
-      
-      // Requesting wallet connection session directly
-      const { address } = await kit.connect({
-        wallet: walletId
-      });
-
-      if (address) {
-        _setPubKey(address);
-        setIsModalOpen(false);
-        await fetchBalanceAfterTx(address);
+      const allowed = await checkConnection();
+      if (!allowed) {
+        setError("Permission denied by wallet.");
+        return;
       }
+
+      const key = await retrievePublicKey();
+      const bal = await getBalance();
+
+      _setPubKey(key);
+      setBalance(Number(bal).toFixed(2));
+      setIsModalOpen(false);
     } catch (e) {
       console.error(e);
-      setError("Wallet connection declined or missing extension.");
+      setError("Wallet connection failed.");
     }
   };
 
   const fetchBalanceAfterTx = async (address) => {
-    if (!address) return;
     try {
       const account = await server.loadAccount(address);
-      if (account && account.balances) {
-        const nativeBalance = account.balances.find(b => b.asset_type === 'native');
-        setBalance(nativeBalance ? Number(nativeBalance.balance).toFixed(2) : "0");
-      }
+      const nativeBalance = account.balances.find(b => b.asset_type === 'native');
+      setBalance(nativeBalance ? Number(nativeBalance.balance).toFixed(2) : "0");
     } catch (err) {
       setBalance("Account Not Funded"); 
     }
@@ -94,7 +86,7 @@ function App() {
     if (!address) return;
     try {
       const txRecords = await server.transactions().forAccount(address).order("desc").limit(5).call();
-      setTransactions(txRecords.records || []);
+      setTransactions(txRecords.records);
     } catch (err) {
       console.error(err);
     }
@@ -108,30 +100,28 @@ function App() {
     setTxHash("");
   };
 
+  // NEW: Helper function to simulate a read-only transaction on Soroban
   const simulateContractCall = async (methodName, params = []) => {
     const contract = new Contract(CONTRACT_ID);
     const activePubKey = pubKey || "GB7U7DTUDKXTNZFUT3Q7XWEXL7G4LXN5VNECEIWDXU6LMLD7KXTND7TU";
-    try {
-      const account = await server.loadAccount(activePubKey);
-      if (!account) return null;
-      
-      const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
-        .addOperation(contract.call(methodName, ...params))
-        .setTimeout(TimeoutInfinite)
-        .build();
+    const account = await server.loadAccount(activePubKey);
+    
+    const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
+      .addOperation(contract.call(methodName, ...params))
+      .setTimeout(TimeoutInfinite)
+      .build();
 
-      const result = await sorobanRpc.simulateTransaction(tx);
-      if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-        return scValToNative(result.result.retval);
-      }
-    } catch (err) {
-      console.error(`Simulation error for ${methodName}:`, err);
+    const result = await sorobanRpc.simulateTransaction(tx);
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      return scValToNative(result.result.retval);
     }
     return null;
   };
 
+  // NEW: Fetch all feedbacks dynamically based on the current total counter
   const handleFetchAllFeedbacks = async () => {
     try {
+      // 1. Get the total number of feedbacks
       const totalFeedbacks = await simulateContractCall('get_total_feedbacks');
       if (!totalFeedbacks || totalFeedbacks === 0) {
         setFeedbacks([]);
@@ -139,12 +129,14 @@ function App() {
       }
 
       const allFeedbacks = [];
+      // 2. Loop through and fetch each feedback by its ID
       for (let i = 1; i <= totalFeedbacks; i++) {
         const item = await simulateContractCall('get_feedback_by_id', [xdr.ScVal.scvU32(i)]);
         if (item) {
-          allFeedbacks.push(item);
+          allFeedbacks.push(item); // item will be an object: { id, user, message }
         }
       }
+      // Show newest first
       setFeedbacks(allFeedbacks.reverse());
     } catch (err) {
       console.error("Error fetching feedbacks:", err);
@@ -182,15 +174,15 @@ function App() {
       
       let signedResult;
       try {
-        const { signedTxXdr } = await kit.signTransaction(xdrString);
-        signedResult = signedTxXdr;
+        signedResult = await signTransaction(xdrString, { network: "TESTNET", networkPassphrase });
       } catch (walletError) {
         setError("UserReject: Transaction signing was canceled by the user.");
         setContractLoading(false);
         return;
       }
 
-      const sendTxResult = await sorobanRpc.sendTransaction(TransactionBuilder.fromXDR(signedResult, networkPassphrase));
+      const finalXdr = typeof signedResult === 'string' ? signedResult : (signedResult.signedTxXdr || signedResult);
+      const sendTxResult = await sorobanRpc.sendTransaction(TransactionBuilder.fromXDR(finalXdr, networkPassphrase));
       
       if (sendTxResult.status !== 'ERROR') {
         setTxHash(sendTxResult.hash);
@@ -225,15 +217,14 @@ function App() {
       const xdrString = transaction.toXDR();
       let signedResult;
       try {
-        const { signedTxXdr } = await kit.signTransaction(xdrString);
-        signedResult = signedTxXdr;
+        signedResult = await signTransaction(xdrString, { network: "TESTNET", networkPassphrase: Networks.TESTNET });
       } catch (err) {
         setError("UserReject: Transaction signing was canceled.");
         setLoading(false);
         return;
       }
-      
-      const txResponse = await server.submitTransaction(TransactionBuilder.fromXDR(signedResult, Networks.TESTNET));
+      const finalXdr = typeof signedResult === 'string' ? signedResult : (signedResult.signedTxXdr || signedResult);
+      const txResponse = await server.submitTransaction(TransactionBuilder.fromXDR(finalXdr, Networks.TESTNET));
       setTxHash(txResponse.hash);
       fetchBalanceAfterTx(pubKey);
       fetchTransactionHistory(pubKey);
@@ -246,6 +237,7 @@ function App() {
     }
   };
 
+  // MODIFIED: Search directly inside contract by ID instead of pulling transaction hashes
   const handleSearchId = async (e) => {
     e.preventDefault();
     if (!searchId) return;
@@ -295,6 +287,7 @@ function App() {
       
       <pubKeyData.Provider value={pubKey}>
         
+        {/* Simple Payment Component */}
         <div style={{ maxWidth: '500px', margin: '40px auto 20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
             <h2 style={{ color: '#a78bfa', margin: 0, fontSize: '24px' }}>Stellar Simple Payment</h2>
@@ -317,6 +310,7 @@ function App() {
           )}
         </div>
 
+        {/* Soroban Feedback Component */}
         <div style={{ maxWidth: '500px', margin: '20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px', textAlign: 'left' }}>
           <h2 style={{ color: '#a78bfa', marginBottom: '4px', fontSize: '24px' }}>Web3 Feedback Board</h2>
           <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '20px' }}>Submit immutable logs directly to Soroban smart contract vectors</p>
@@ -329,6 +323,7 @@ function App() {
             </button>
           </form>
 
+          {/* On-Chain Logs */}
           <h3 style={{ color: '#a78bfa', marginTop: '24px', fontSize: '16px', borderBottom: '1px solid #374151', paddingBottom: '8px' }}>On-Chain Logs ({feedbacks.length})</h3>
           <div style={{ maxHeight: '240px', overflowY: 'auto', marginTop: '10px', paddingRight: '4px' }}>
             {feedbacks.length === 0 ? <p style={{ color: '#6b7280', fontSize: '12px' }}>No feedbacks logged yet.</p> : (
@@ -372,6 +367,7 @@ function App() {
             )}
           </div>
 
+          {/* Wallet Live Transactions List */}
           {pubKey && (
             <>
               <h3 style={{ color: '#a78bfa', marginTop: '28px', fontSize: '16px', borderBottom: '1px solid #374151', paddingBottom: '8px' }}>Your Wallet Live Transactions</h3>
@@ -385,7 +381,7 @@ function App() {
                           <span style={{ color: '#34d399', fontWeight: 'bold' }}>Fee: {tx.fee_charged} stroops</span>
                         </div>
                         <div style={{ backgroundColor: 'rgba(0,0,0,0.3)', padding: '6px', borderRadius: '4px', fontFamily: 'monospace', color: '#cbd5e1', wordBreak: 'break-all', marginBottom: '8px' }}>
-                          {tx.id ? `${tx.id.slice(0, 10)}...${tx.id.slice(-10)}` : ''}
+                          {`${tx.id.slice(0, 10)}...${tx.id.slice(-10)}`}
                         </div>
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <button 
@@ -413,6 +409,7 @@ function App() {
 
         </div>
 
+        {/* 🔍 Smart Contract ID Decoder Search Section */}
         <div style={{ maxWidth: '500px', margin: '20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px', textAlign: 'left', border: '1px solid #374151' }}>
           <h2 style={{ color: '#a78bfa', marginBottom: '4px', fontSize: '20px' }}>🔍 Inspect Feedback by ID</h2>
           <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '20px' }}>Input any numeric feedback ID below to fetch and decode the text entry stored in the contract ledger.</p>
@@ -455,26 +452,24 @@ function App() {
           )}
         </div>
 
+        {/* Multi-Wallet Modal Component */}
         {isModalOpen && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
             <div style={{ backgroundColor: '#1f2937', padding: '32px', borderRadius: '12px', width: '90%', maxWidth: '400px', border: '1px solid #374151', textAlign: 'center' }}>
               <h3 style={{ color: '#fff', marginBottom: '4px' }}>Select a Wallet</h3>
               <p style={{ color: '#9ca3af', fontSize: '12px', marginBottom: '20px' }}>Connect with Soroban testnet parameters</p>
-              
-              <button onClick={() => handleConnectWallet("freighter")} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>Freighter Wallet</button>
-              <button onClick={() => handleConnectWallet("xbull")} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>xBull Wallet</button>
-              <button onClick={() => handleConnectWallet("albedo")} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>Albedo Wallet</button>
-              
-              <button onClick={() => setIsModalOpen(false)} style={{ width: '100%', padding: '10px', backgroundColor: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', marginTop: '8px' }}>Close Window</button>
+              <button onClick={handleConnectFreighter} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>Freighter Wallet</button>
+              <button onClick={() => setIsModalOpen(false)} style={{ width: '100%', padding: '10px', backgroundColor: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>Close Window</button>
             </div>
           </div>
         )}
-
+        {/* Success Tx Hash Notification */}
         {txHash && (
           <div style={{ maxWidth: '500px', margin: '10px auto', padding: '12px', backgroundColor: '#065f46', borderRadius: '6px', color: '#a7f3d0', fontSize: '14px', wordBreak: 'break-all', textAlign: 'left' }}>
             🎉 Transaction Successful! Hash: {txHash}
           </div>
         )}
+        {/* Error notification display */}
         <div style={{ maxWidth: '500px', margin: '10px auto' }}>
           {error && <div style={{ padding: '12px', backgroundColor: '#7f1d1d', borderRadius: '6px', color: '#fca5a5', fontSize: '14px', marginBottom: '10px' }}>{error}</div>}
         </div>
