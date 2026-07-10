@@ -53,30 +53,24 @@ function App() {
   }, [pubKey]);
 
   const handleConnectFreighter = async () => {
-  try {
-    setError("");
+    try {
+      const allowed = await checkConnection();
+      if (!allowed) {
+        setError("Permission denied by wallet.");
+        return;
+      }
 
-    const allowed = await checkConnection();
-    if (!allowed) {
-      setError("Please open this site inside the Freighter App browser and try again.");
-      return;
-    }
-
-    const key = await retrievePublicKey();
-    
-    if (key) {
+      const key = await retrievePublicKey();
       const bal = await getBalance();
+
       _setPubKey(key);
       setBalance(Number(bal).toFixed(2));
       setIsModalOpen(false);
-    } else {
-      setError("Connection canceled or no key returned.");
+    } catch (e) {
+      console.error(e);
+      setError("Wallet connection failed.");
     }
-  } catch (e) {
-    console.error(e);
-    setError(`Error: ${e.message || "Wallet connection failed."}`);
-  }
-};
+  };
 
   const fetchBalanceAfterTx = async (address) => {
     try {
