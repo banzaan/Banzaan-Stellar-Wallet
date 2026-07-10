@@ -11,7 +11,6 @@ const CONTRACT_ID = 'CC3I5V57TQDFKK3CFIOHC3RYXHRG4WPRLHFZC6VHRZEFRRWM4XWHWOGC';
 const sorobanRpc = new rpc.Server('https://soroban-testnet.stellar.org');
 const networkPassphrase = 'Test SDF Network ; September 2015';
 
-// Initialize Stellar Wallets Kit (v2 Standard)
 StellarWalletsKit.init({
   networkPassphrase: networkPassphrase
 });
@@ -25,7 +24,6 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   
-  // Feedback States
   const [feedbackInput, setFeedbackInput] = useState("");
   const [userName, setUserName] = useState("");
   const [feedbacks, setFeedbacks] = useState([]);
@@ -34,7 +32,6 @@ function App() {
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [copiedTxIndex, setCopiedTxIndex] = useState(null);
 
-  // Search States
   const [searchId, setSearchId] = useState("");
   const [searchResult, setSearchResult] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -56,7 +53,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubKey]);
 
-  // Wallet Connection Handler (v2 Static Method)
   const handleConnectWallet = async () => {
     try {
       setError("");
@@ -71,10 +67,13 @@ function App() {
   };
 
   const fetchBalanceAfterTx = async (address) => {
+    if (!address) return;
     try {
       const account = await server.loadAccount(address);
-      const nativeBalance = account.balances.find(b => b.asset_type === 'native');
-      setBalance(nativeBalance ? Number(nativeBalance.balance).toFixed(2) : "0");
+      if (account && account.balances) {
+        const nativeBalance = account.balances.find(b => b.asset_type === 'native');
+        setBalance(nativeBalance ? Number(nativeBalance.balance).toFixed(2) : "0");
+      }
     } catch (err) {
       setBalance("Account Not Funded"); 
     }
@@ -84,7 +83,7 @@ function App() {
     if (!address) return;
     try {
       const txRecords = await server.transactions().forAccount(address).order("desc").limit(5).call();
-      setTransactions(txRecords.records);
+      setTransactions(txRecords.records || []);
     } catch (err) {
       console.error(err);
     }
@@ -289,7 +288,6 @@ function App() {
       
       <pubKeyData.Provider value={pubKey}>
         
-        {/* Simple Payment Component */}
         <div style={{ maxWidth: '500px', margin: '40px auto 20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
             <h2 style={{ color: '#a78bfa', margin: 0, fontSize: '24px' }}>Stellar Simple Payment</h2>
@@ -312,7 +310,6 @@ function App() {
           )}
         </div>
 
-        {/* Soroban Feedback Component */}
         <div style={{ maxWidth: '500px', margin: '20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px', textAlign: 'left' }}>
           <h2 style={{ color: '#a78bfa', marginBottom: '4px', fontSize: '24px' }}>Web3 Feedback Board</h2>
           <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '20px' }}>Submit immutable logs directly to Soroban smart contract vectors</p>
@@ -325,7 +322,6 @@ function App() {
             </button>
           </form>
 
-          {/* On-Chain Logs */}
           <h3 style={{ color: '#a78bfa', marginTop: '24px', fontSize: '16px', borderBottom: '1px solid #374151', paddingBottom: '8px' }}>On-Chain Logs ({feedbacks.length})</h3>
           <div style={{ maxHeight: '240px', overflowY: 'auto', marginTop: '10px', paddingRight: '4px' }}>
             {feedbacks.length === 0 ? <p style={{ color: '#6b7280', fontSize: '12px' }}>No feedbacks logged yet.</p> : (
@@ -369,7 +365,6 @@ function App() {
             )}
           </div>
 
-          {/* Wallet Live Transactions List */}
           {pubKey && (
             <>
               <h3 style={{ color: '#a78bfa', marginTop: '28px', fontSize: '16px', borderBottom: '1px solid #374151', paddingBottom: '8px' }}>Your Wallet Live Transactions</h3>
@@ -383,7 +378,7 @@ function App() {
                           <span style={{ color: '#34d399', fontWeight: 'bold' }}>Fee: {tx.fee_charged} stroops</span>
                         </div>
                         <div style={{ backgroundColor: 'rgba(0,0,0,0.3)', padding: '6px', borderRadius: '4px', fontFamily: 'monospace', color: '#cbd5e1', wordBreak: 'break-all', marginBottom: '8px' }}>
-                          {`${tx.id.slice(0, 10)}...${tx.id.slice(-10)}`}
+                          {tx.id ? `${tx.id.slice(0, 10)}...${tx.id.slice(-10)}` : ''}
                         </div>
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <button 
@@ -411,7 +406,6 @@ function App() {
 
         </div>
 
-        {/* Smart Contract ID Decoder Search Section */}
         <div style={{ maxWidth: '500px', margin: '20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px', textAlign: 'left', border: '1px solid #374151' }}>
           <h2 style={{ color: '#a78bfa', marginBottom: '4px', fontSize: '20px' }}>🔍 Inspect Feedback by ID</h2>
           <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '20px' }}>Input any numeric feedback ID below to fetch and decode the text entry stored in the contract ledger.</p>
@@ -454,13 +448,11 @@ function App() {
           )}
         </div>
 
-        {/* Success Tx Hash Notification */}
         {txHash && (
           <div style={{ maxWidth: '500px', margin: '10px auto', padding: '12px', backgroundColor: '#065f46', borderRadius: '6px', color: '#a7f3d0', fontSize: '14px', wordBreak: 'break-all', textAlign: 'left' }}>
             Transaction Successful! Hash: {txHash}
           </div>
         )}
-        {/* Error notification display */}
         <div style={{ maxWidth: '500px', margin: '10px auto' }}>
           {error && <div style={{ padding: '12px', backgroundColor: '#7f1d1d', borderRadius: '6px', color: '#fca5a5', fontSize: '14px', marginBottom: '10px' }}>{error}</div>}
         </div>
