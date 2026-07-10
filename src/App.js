@@ -2,8 +2,8 @@ import './App.css';
 import Header from './components/Header';
 import { useState, useEffect, createContext } from 'react';
 import { Horizon, TransactionBuilder, Networks, Asset, Operation, BASE_FEE, TimeoutInfinite, Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
-// Import the Multi-Wallet Kit instead of standalone Freighter
-import { StellarWalletsKit, WalletType } from "@creit.tech/stellar-wallets-kit";
+// Removed WalletType import to fix Vercel build crash
+import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 
 const pubKeyData = createContext();
 const server = new Horizon.Server("https://horizon-testnet.stellar.org");
@@ -57,18 +57,17 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubKey]);
 
-  // NEW: Multi-Wallet Connection Handler
-  const handleConnectWallet = async (walletType) => {
+  // Multi-Wallet Connection Handler using safe native strings
+  const handleConnectWallet = async (walletId) => {
     try {
       setError("");
-      // Set the target wallet selected by user (Freighter, xBull, etc.)
-      kit.setWallet(walletType);
+      // Using direct wallet identifiers approved by Stellar Wallets Kit standard
+      kit.setWallet(walletId);
       
       const { address } = await kit.getAddress();
       if (address) {
         _setPubKey(address);
         setIsModalOpen(false);
-        // Fetch fresh balance after connecting
         await fetchBalanceAfterTx(address);
       }
     } catch (e) {
@@ -182,7 +181,6 @@ function App() {
       
       let signedResult;
       try {
-        // Multi-wallet compatible signing method
         const { signedTxXdr } = await kit.signTransaction(xdrString);
         signedResult = signedTxXdr;
       } catch (walletError) {
@@ -226,7 +224,6 @@ function App() {
       const xdrString = transaction.toXDR();
       let signedResult;
       try {
-        // Multi-wallet compatible signing method for regular payment
         const { signedTxXdr } = await kit.signTransaction(xdrString);
         signedResult = signedTxXdr;
       } catch (err) {
@@ -457,16 +454,16 @@ function App() {
           )}
         </div>
 
-        {/* Multi-Wallet Modal UI Connected directly to the Kit */}
+        {/* Updated Modal using native string parameters instead of WalletType enum */}
         {isModalOpen && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', items: 'center', zIndex: 9999 }}>
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
             <div style={{ backgroundColor: '#1f2937', padding: '32px', borderRadius: '12px', width: '90%', maxWidth: '400px', border: '1px solid #374151', textAlign: 'center' }}>
               <h3 style={{ color: '#fff', marginBottom: '4px' }}>Select a Wallet</h3>
               <p style={{ color: '#9ca3af', fontSize: '12px', marginBottom: '20px' }}>Connect with Soroban testnet parameters</p>
               
-              <button onClick={() => handleConnectWallet(WalletType.FREIGHTER)} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>Freighter Wallet</button>
-              <button onClick={() => handleConnectWallet(WalletType.XBULL)} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>xBull Wallet</button>
-              <button onClick={() => handleConnectWallet(WalletType.ALBEDO)} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>Albedo Wallet</button>
+              <button onClick={() => handleConnectWallet("freighter")} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>Freighter Wallet</button>
+              <button onClick={() => handleConnectWallet("xbull")} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>xBull Wallet</button>
+              <button onClick={() => handleConnectWallet("albedo")} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>Albedo Wallet</button>
               
               <button onClick={() => setIsModalOpen(false)} style={{ width: '100%', padding: '10px', backgroundColor: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', marginTop: '8px' }}>Close Window</button>
             </div>
