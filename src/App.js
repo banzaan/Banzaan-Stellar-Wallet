@@ -3,8 +3,8 @@ import Header from './components/Header';
 import { useState, useEffect, createContext } from 'react';
 import { Horizon, TransactionBuilder, Networks, Asset, Operation, BASE_FEE, TimeoutInfinite, Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
 
-// Standard Multi-Wallet Kit imports
-import { StellarWalletsKit, WalletNetwork, FREIGHTER_ID, ALBEDO_ID } from '@creit.tech/stellar-wallets-kit';
+// Import only what is completely safe and won't throw compile errors
+import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit';
 
 const pubKeyData = createContext();
 const server = new Horizon.Server("https://horizon-testnet.stellar.org");
@@ -13,13 +13,12 @@ const CONTRACT_ID = 'CC3I5V57TQDFKK3CFIOHC3RYXHRG4WPRLHFZC6VHRZEFRRWM4XWHWOGC';
 const sorobanRpc = new rpc.Server('https://soroban-testnet.stellar.org');
 const networkPassphrase = 'Test SDF Network ; September 2015';
 
-// Build the standard toolkit instance
+// Pass network as a direct string 'testnet' instead of using WalletNetwork enum
 let kitInstance = null;
 function getKit() {
   if (!kitInstance) {
     kitInstance = new StellarWalletsKit({
-      network: WalletNetwork.TESTNET,
-      selectedWalletId: FREIGHTER_ID
+      network: 'testnet' 
     });
   }
   return kitInstance;
@@ -64,7 +63,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubKey]);
 
-  // Standard multi-wallet triggers modal automatically
   const handleConnectWalletKit = async () => {
     try {
       setError("");
