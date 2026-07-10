@@ -2,7 +2,8 @@ import './App.css';
 import Header from './components/Header';
 import { useState, useEffect, createContext } from 'react';
 import { Horizon, TransactionBuilder, Networks, Asset, Operation, BASE_FEE, TimeoutInfinite, Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
-import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
+import { signTransaction } from '@stellar/freighter-api';
+import { checkConnection, retrievePublicKey, getBalance } from "./components/Freighter";
 
 const pubKeyData = createContext();
 const server = new Horizon.Server("https://horizon-testnet.stellar.org");
@@ -10,10 +11,6 @@ const server = new Horizon.Server("https://horizon-testnet.stellar.org");
 const CONTRACT_ID = 'CC3I5V57TQDFKK3CFIOHC3RYXHRG4WPRLHFZC6VHRZEFRRWM4XWHWOGC'; 
 const sorobanRpc = new rpc.Server('https://soroban-testnet.stellar.org');
 const networkPassphrase = 'Test SDF Network ; September 2015';
-
-StellarWalletsKit.init({
-  networkPassphrase: networkPassphrase
-});
 
 function App() {
   const [pubKey, _setPubKey] = useState("");
@@ -28,6 +25,7 @@ function App() {
   const [userName, setUserName] = useState("");
   const [feedbacks, setFeedbacks] = useState([]);
   const [contractLoading, setContractLoading] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [copiedTxIndex, setCopiedTxIndex] = useState(null);
@@ -39,7 +37,6 @@ function App() {
   useEffect(() => {
     if (pubKey) {
       fetchTransactionHistory(pubKey);
-      fetchBalanceAfterTx(pubKey);
     } else {
       setBalance("0");
       setTransactions([]);
@@ -53,16 +50,23 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubKey]);
 
-  const handleConnectWallet = async () => {
+  const handleConnectFreighter = async () => {
     try {
-      setError("");
-      const { address } = await StellarWalletsKit.getAddress();
-      if (address) {
-        _setPubKey(address);
+      const allowed = await checkConnection();
+      if (!allowed) {
+        setError("Permission denied by wallet.");
+        return;
       }
+
+      const key = await retrievePublicKey();
+      const bal = await getBalance();
+
+      _setPubKey(key);
+      setBalance(Number(bal).toFixed(2));
+      setIsModalOpen(false);
     } catch (e) {
       console.error(e);
-      setError("Wallet connection declined or closed.");
+      setError("Wallet connection failed.");
     }
   };
 
@@ -102,6 +106,7 @@ function App() {
     const activePubKey = pubKey || "GB7U7DTUDKXTNZFUT3Q7XWEXL7G4LXN5VNECEIWDXU6LMLD7KXTND7TU";
     try {
       const account = await server.loadAccount(activePubKey);
+      if (!account) return null;
       
       const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
         .addOperation(contract.call(methodName, ...params))
@@ -170,18 +175,15 @@ function App() {
       
       let signedResult;
       try {
-        const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdrString, {
-          networkPassphrase: networkPassphrase,
-          address: pubKey
-        });
-        signedResult = signedTxXdr;
+        signedResult = await signTransaction(xdrString, { network: "TESTNET", networkPassphrase });
       } catch (walletError) {
         setError("UserReject: Transaction signing was canceled by the user.");
         setContractLoading(false);
         return;
       }
 
-      const sendTxResult = await sorobanRpc.sendTransaction(TransactionBuilder.fromXDR(signedResult, networkPassphrase));
+      const finalXdr = typeof signedResult === 'string' ? signedResult : (signedResult.signedTxXdr || signedResult);
+      const sendTxResult = await sorobanRpc.sendTransaction(TransactionBuilder.fromXDR(finalXdr, networkPassphrase));
       
       if (sendTxResult.status !== 'ERROR') {
         setTxHash(sendTxResult.hash);
@@ -216,17 +218,14 @@ function App() {
       const xdrString = transaction.toXDR();
       let signedResult;
       try {
-        const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdrString, {
-          networkPassphrase: Networks.TESTNET,
-          address: pubKey
-        });
-        signedResult = signedTxXdr;
+        signedResult = await signTransaction(xdrString, { network: "TESTNET", networkPassphrase: Networks.TESTNET });
       } catch (err) {
         setError("UserReject: Transaction signing was canceled.");
         setLoading(false);
         return;
       }
-      const txResponse = await server.submitTransaction(TransactionBuilder.fromXDR(signedResult, Networks.TESTNET));
+      const finalXdr = typeof signedResult === 'string' ? signedResult : (signedResult.signedTxXdr || signedResult);
+      const txResponse = await server.submitTransaction(TransactionBuilder.fromXDR(finalXdr, Networks.TESTNET));
       setTxHash(txResponse.hash);
       fetchBalanceAfterTx(pubKey);
       fetchTransactionHistory(pubKey);
@@ -306,7 +305,7 @@ function App() {
               <button type="submit" disabled={loading} style={{ width: '100%', padding: '14px', borderRadius: '6px', backgroundColor: '#7c3aed', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>{loading ? 'Processing...' : 'Send XLM'}</button>
             </form>
           ) : (
-            <button onClick={handleConnectWallet} style={{ width: '100%', padding: '16px', borderRadius: '8px', backgroundColor: '#f59e0b', color: '#111827', fontWeight: 'bold', cursor: 'pointer' }}>🚀 Connect Multi-Wallet Options</button>
+            <button onClick={() => setIsModalOpen(true)} style={{ width: '100%', padding: '16px', borderRadius: '8px', backgroundColor: '#f59e0b', color: '#111827', fontWeight: 'bold', cursor: 'pointer' }}>🚀 Connect Multi-Wallet options</button>
           )}
         </div>
 
@@ -448,9 +447,19 @@ function App() {
           )}
         </div>
 
+        {isModalOpen && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+            <div style={{ backgroundColor: '#1f2937', padding: '32px', borderRadius: '12px', width: '90%', maxWidth: '400px', border: '1px solid #374151', textAlign: 'center' }}>
+              <h3 style={{ color: '#fff', marginBottom: '4px' }}>Select a Wallet</h3>
+              <p style={{ color: '#9ca3af', fontSize: '12px', marginBottom: '20px' }}>Connect with Soroban testnet parameters</p>
+              <button onClick={handleConnectFreighter} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>Freighter Wallet</button>
+              <button onClick={() => setIsModalOpen(false)} style={{ width: '100%', padding: '10px', backgroundColor: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>Close Window</button>
+            </div>
+          </div>
+        )}
         {txHash && (
           <div style={{ maxWidth: '500px', margin: '10px auto', padding: '12px', backgroundColor: '#065f46', borderRadius: '6px', color: '#a7f3d0', fontSize: '14px', wordBreak: 'break-all', textAlign: 'left' }}>
-            Transaction Successful! Hash: {txHash}
+            🎉 Transaction Successful! Hash: {txHash}
           </div>
         )}
         <div style={{ maxWidth: '500px', margin: '10px auto' }}>
