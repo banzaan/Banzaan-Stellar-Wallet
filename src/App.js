@@ -1,14 +1,14 @@
 import './App.css';
 import Header from './components/Header';
 import { useState, useEffect, createContext } from 'react';
-import { Horizon, TransactionBuilder, Networks, Asset, Operation, BASE_FEE, TimeoutInfinite, Contract, rpc, scValToNative } from '@stellar/stellar-sdk';
+import { Horizon, TransactionBuilder, Networks, Asset, Operation, BASE_FEE, TimeoutInfinite, Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
 import { signTransaction } from '@stellar/freighter-api';
+import { checkConnection, retrievePublicKey, getBalance } from "./components/Freighter";
 
 const pubKeyData = createContext();
 const server = new Horizon.Server("https://horizon-testnet.stellar.org");
 
-// Soroban Setup
-const CONTRACT_ID = 'CDKYGMSSPTHCE4NPLVIVARGD7BFREWUOW5BNLOEPDGOSY2HJZEDXLRFP'; 
+const CONTRACT_ID = 'CC3I5V57TQDFKK3CFIOHC3RYXHRG4WPRLHFZC6VHRZEFRRWM4XWHWOGC'; 
 const sorobanRpc = new rpc.Server('https://soroban-testnet.stellar.org');
 const networkPassphrase = 'Test SDF Network ; September 2015';
 
@@ -21,19 +21,23 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   
-  // Multi-Wallet Modal State
-  const [isModalOpen, setIsModalOpen] = useState(false);
-
-  // Soroban States
-  const [count, setCount] = useState(0);
+  // Feedback States
+  const [feedbackInput, setFeedbackInput] = useState("");
+  const [userName, setUserName] = useState("");
+  const [feedbacks, setFeedbacks] = useState([]);
   const [contractLoading, setContractLoading] = useState(false);
-
-  // History State
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [transactions, setTransactions] = useState([]);
+  const [copiedIndex, setCopiedIndex] = useState(null);
+  const [copiedTxIndex, setCopiedTxIndex] = useState(null);
+
+  // Search States (Modified for ID Search)
+  const [searchId, setSearchId] = useState("");
+  const [searchResult, setSearchResult] = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   useEffect(() => {
     if (pubKey) {
-      fetchBalance(pubKey);
       fetchTransactionHistory(pubKey);
     } else {
       setBalance("0");
@@ -44,17 +48,36 @@ function App() {
   }, [pubKey]);
 
   useEffect(() => {
-    fetchCurrentCount();
+    handleFetchAllFeedbacks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubKey]);
 
-  const fetchBalance = async (address) => {
+  const handleConnectFreighter = async () => {
+    try {
+      const allowed = await checkConnection();
+      if (!allowed) {
+        setError("Permission denied by wallet.");
+        return;
+      }
+
+      const key = await retrievePublicKey();
+      const bal = await getBalance();
+
+      _setPubKey(key);
+      setBalance(Number(bal).toFixed(2));
+      setIsModalOpen(false);
+    } catch (e) {
+      console.error(e);
+      setError("Wallet connection failed.");
+    }
+  };
+
+  const fetchBalanceAfterTx = async (address) => {
     try {
       const account = await server.loadAccount(address);
       const nativeBalance = account.balances.find(b => b.asset_type === 'native');
-      setBalance(nativeBalance ? nativeBalance.balance : "0");
+      setBalance(nativeBalance ? Number(nativeBalance.balance).toFixed(2) : "0");
     } catch (err) {
-      console.error("Error fetching balance:", err);
       setBalance("Account Not Funded"); 
     }
   };
@@ -62,14 +85,10 @@ function App() {
   const fetchTransactionHistory = async (address) => {
     if (!address) return;
     try {
-      const txRecords = await server.transactions()
-        .forAccount(address)
-        .order("desc")
-        .limit(10)
-        .call();
+      const txRecords = await server.transactions().forAccount(address).order("desc").limit(5).call();
       setTransactions(txRecords.records);
     } catch (err) {
-      console.error("Error fetching transactions:", err);
+      console.error(err);
     }
   };
 
@@ -81,58 +100,56 @@ function App() {
     setTxHash("");
   };
 
-  const fetchCurrentCount = async () => {
+  // NEW: Helper function to simulate a read-only transaction on Soroban
+  const simulateContractCall = async (methodName, params = []) => {
+    const contract = new Contract(CONTRACT_ID);
+    const activePubKey = pubKey || "GB7U7DTUDKXTNZFUT3Q7XWEXL7G4LXN5VNECEIWDXU6LMLD7KXTND7TU";
+    const account = await server.loadAccount(activePubKey);
+    
+    const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
+      .addOperation(contract.call(methodName, ...params))
+      .setTimeout(TimeoutInfinite)
+      .build();
+
+    const result = await sorobanRpc.simulateTransaction(tx);
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      return scValToNative(result.result.retval);
+    }
+    return null;
+  };
+
+  // NEW: Fetch all feedbacks dynamically based on the current total counter
+  const handleFetchAllFeedbacks = async () => {
     try {
-      const contract = new Contract(CONTRACT_ID);
-      const activePubKey = pubKey || "GB7U7DTUDKXTNZFUT3Q7XWEXL7G4LXN5VNECEIWDXU6LMLD7KXTND7TU";
-      
-      const account = await server.loadAccount(activePubKey);
-      const tx = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: networkPassphrase
-      })
-        .addOperation(contract.call('get_count'))
-        .setTimeout(TimeoutInfinite)
-        .build();
-
-      const result = await sorobanRpc.simulateTransaction(tx);
-      
-      if (rpc.Api.isSimulationSuccess(result)) {
-        const currentCount = scValToNative(result.result.retval);
-        setCount(currentCount);
+      // 1. Get the total number of feedbacks
+      const totalFeedbacks = await simulateContractCall('get_total_feedbacks');
+      if (!totalFeedbacks || totalFeedbacks === 0) {
+        setFeedbacks([]);
+        return;
       }
+
+      const allFeedbacks = [];
+      // 2. Loop through and fetch each feedback by its ID
+      for (let i = 1; i <= totalFeedbacks; i++) {
+        const item = await simulateContractCall('get_feedback_by_id', [xdr.ScVal.scvU32(i)]);
+        if (item) {
+          allFeedbacks.push(item); // item will be an object: { id, user, message }
+        }
+      }
+      // Show newest first
+      setFeedbacks(allFeedbacks.reverse());
     } catch (err) {
-      console.error("Error fetching count:", err);
+      console.error("Error fetching feedbacks:", err);
     }
   };
 
-  const handleConnectWalletClick = () => {
-    setIsModalOpen(true);
-  };
-
-  const selectWallet = async (walletId) => {
-    setIsModalOpen(false);
-    setError("");
-    if (walletId === 'freighter') {
-      // Direct integration for Freighter as the primary active wallet
-      try {
-        //const account = await server.loadAccount("GB7U7DTUDKXTNZFUT3Q7XWEXL7G4LXN5VNECEIWDXU6LMLD7KXTND7TU"); // dummy trigger to check environment
-        // standard Freighter fetch via header or direct API simulation
-        // If your Header already has connection logic, it will seamlessly bridge here.
-        alert("Connecting to Freighter Wallet...");
-      } catch (e) {
-        console.log(e);
-      }
-    } else {
-      setError(`Selected ${walletId} wallet is available in production build. Please use Freighter for Testnet simulation.`);
-    }
-  };
-
-  const handleIncrement = async () => {
+  const handleSendFeedback = async (e) => {
+    e.preventDefault();
     if (!pubKey) {
       setError("Missing Key: Please connect your wallet first.");
       return;
     }
+    if (!feedbackInput || !userName) return;
 
     setContractLoading(true);
     setError("");
@@ -142,30 +159,23 @@ function App() {
       const contract = new Contract(CONTRACT_ID);
       const account = await server.loadAccount(pubKey);
 
-      const baseTx = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: networkPassphrase
-      })
-        .addOperation(contract.call('increment'))
+      const params = [
+        xdr.ScVal.scvString(userName),
+        xdr.ScVal.scvString(feedbackInput)
+      ];
+
+      const baseTx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
+        .addOperation(contract.call('send_feedback', ...params))
         .setTimeout(TimeoutInfinite)
         .build();
 
       const preparedTx = await sorobanRpc.prepareTransaction(baseTx);
-      const xdr = preparedTx.toXDR();
+      const xdrString = preparedTx.toXDR();
       
       let signedResult;
       try {
-        signedResult = await signTransaction(xdr, {
-          network: "TESTNET",
-          networkPassphrase: networkPassphrase
-        });
+        signedResult = await signTransaction(xdrString, { network: "TESTNET", networkPassphrase });
       } catch (walletError) {
-        setError("UserReject: Transaction signing was canceled by the user.");
-        setContractLoading(false);
-        return;
-      }
-
-      if (!signedResult) {
         setError("UserReject: Transaction signing was canceled by the user.");
         setContractLoading(false);
         return;
@@ -176,15 +186,17 @@ function App() {
       
       if (sendTxResult.status !== 'ERROR') {
         setTxHash(sendTxResult.hash);
+        setFeedbackInput("");
         setTimeout(() => {
-          fetchCurrentCount();
+          handleFetchAllFeedbacks();
           fetchTransactionHistory(pubKey);
-        }, 4000);
+          fetchBalanceAfterTx(pubKey);
+        }, 5000);
       } else {
         setError(`Soroban RPC Error: ${JSON.stringify(sendTxResult)}`);
       }
     } catch (err) {
-      setError("UserReject: Transaction signing was canceled by the user.");
+      setError("UserReject: Transaction error or signing canceled.");
     } finally {
       setContractLoading(false);
     }
@@ -195,247 +207,266 @@ function App() {
     setLoading(true);
     setError("");
     setTxHash("");
-
     try {
       const account = await server.loadAccount(pubKey);
-
-      const transaction = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: Networks.TESTNET,
-      })
-        .addOperation(
-          Operation.payment({
-            destination: recipient,
-            asset: Asset.native(),
-            amount: amount,
-          })
-        )
+      const transaction = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
+        .addOperation(Operation.payment({ destination: recipient, asset: Asset.native(), amount: amount }))
         .setTimeout(TimeoutInfinite)
         .build();
 
-      const xdr = transaction.toXDR();
-      
+      const xdrString = transaction.toXDR();
       let signedResult;
       try {
-        signedResult = await signTransaction(xdr, {
-          network: "TESTNET",
-          networkPassphrase: Networks.TESTNET
-        });
-      } catch (walletError) {
-        setError("UserReject: Transaction signing was canceled by the user.");
+        signedResult = await signTransaction(xdrString, { network: "TESTNET", networkPassphrase: Networks.TESTNET });
+      } catch (err) {
+        setError("UserReject: Transaction signing was canceled.");
         setLoading(false);
         return;
       }
-
-      if (!signedResult) {
-        setError("UserReject: Transaction signing was canceled by the user.");
-        setLoading(false);
-        return;
-      }
-
       const finalXdr = typeof signedResult === 'string' ? signedResult : (signedResult.signedTxXdr || signedResult);
-      const txResponse = await server.submitTransaction(
-        TransactionBuilder.fromXDR(finalXdr, Networks.TESTNET)
-      );
-
+      const txResponse = await server.submitTransaction(TransactionBuilder.fromXDR(finalXdr, Networks.TESTNET));
       setTxHash(txResponse.hash);
-      fetchBalance(pubKey);
+      fetchBalanceAfterTx(pubKey);
       fetchTransactionHistory(pubKey);
       setRecipient("");
       setAmount("");
     } catch (err) {
-      setError("UserReject: Transaction signing was canceled by the user.");
+      setError("UserReject: Transaction canceled.");
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="App" style={{ backgroundColor: '#111827', minHeight: '100vh', color: '#0d0b0b', fontFamily: 'sans-serif', paddingBottom: '40px' }}>
-      
-      <style>{`
-        .Header div button, .Header button {
-          color: #fff !important;
-          background-color: #7c3aed !important;
-          font-weight: bold !important;
-          padding: 8px 16px !important;
-          border-radius: 6px !important;
-          font-size: 13px !important;
-          border: none !important;
-          cursor: pointer !important;
-        }
-        .Header div button:hover, .Header button:hover {
-          background-color: #6d28d9 !important;
-        }
-      `}</style>
+  // MODIFIED: Search directly inside contract by ID instead of pulling transaction hashes
+  const handleSearchId = async (e) => {
+    e.preventDefault();
+    if (!searchId) return;
 
-      {/* Synchronized with Header click interface */}
-      <Header pubKey={pubKey} setPubKey={_setPubKey} onConnectClick={handleConnectWalletClick} />
+    setSearchLoading(true);
+    setSearchResult(null);
+    setError("");
+
+    try {
+      const parsedId = parseInt(searchId, 10);
+      if (isNaN(parsedId)) {
+        setError("Please enter a valid numeric ID.");
+        setSearchLoading(false);
+        return;
+      }
+
+      const item = await simulateContractCall('get_feedback_by_id', [xdr.ScVal.scvU32(parsedId)]);
+      
+      if (item) {
+        setSearchResult({ id: item.id, name: item.user, message: item.message });
+      } else {
+        setError(`No feedback found for ID: ${searchId}`);
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Failed to query the smart contract storage.");
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleCopyText = (text, index) => {
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000);
+  };
+
+  const handleCopyTxHash = (hash, index) => {
+    navigator.clipboard.writeText(hash);
+    setCopiedTxIndex(index);
+    setTimeout(() => setCopiedTxIndex(null), 2000);
+  };
+
+  return (
+    <div className="App" style={{ backgroundColor: '#111827', minHeight: '100vh', color: '#fff', fontFamily: 'sans-serif', paddingBottom: '40px' }}>
+      <Header pubKey={pubKey} balance={balance} />
       
       <pubKeyData.Provider value={pubKey}>
         
-        {/* Stellar Payment Card */}
-        <div style={{ maxWidth: '500px', margin: '40px auto 20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
+        {/* Simple Payment Component */}
+        <div style={{ maxWidth: '500px', margin: '40px auto 20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
             <h2 style={{ color: '#a78bfa', margin: 0, fontSize: '24px' }}>Stellar Simple Payment</h2>
-            {pubKey && (
-              <button 
-                onClick={handleDisconnect}
-                style={{ padding: '6px 12px', backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer' }}
-              >
-                Disconnect
-              </button>
-            )}
+            {pubKey && <button onClick={handleDisconnect} style={{ padding: '6px 12px', backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Disconnect</button>}
           </div>
-          <p style={{ color: '#9ca3af', fontSize: '14px', marginBottom: '24px', textAlign: 'left' }}>Send XLM instantly on the Stellar Testnet</p>
-
           {pubKey && (
             <div style={{ backgroundColor: '#111827', padding: '16px', borderRadius: '8px', marginBottom: '24px', textAlign: 'left' }}>
-              <span style={{ fontSize: '12px', color: '#afa49c', display: 'block', marginBottom: '4px' }}>YOUR BALANCE</span>
+              <span style={{ fontSize: '12px', color: '#9ca3af', display: 'block' }}>YOUR BALANCE</span>
               <strong style={{ fontSize: '24px', color: '#34d399' }}>{balance} XLM</strong>
             </div>
           )}
-
           {pubKey ? (
-            <form onSubmit={handlePayment} style={{ display: 'block', textAlign: 'left' }}>
-              <div style={{ marginBottom: '20px', display: 'block' }}>
-                <label style={{ display: 'block', fontSize: '14px', color: '#9ca3af', marginBottom: '8px' }}>Recipient Address (Public Key)</label>
-                <input
-                  type="text"
-                  placeholder="G..."
-                  value={recipient}
-                  onChange={(e) => setRecipient(e.target.value)}
-                  required
-                  style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #374151', backgroundColor: '#111827', color: '#fff', boxSizing: 'border-box', display: 'block' }}
-                />
-              </div>
-
-              <div style={{ marginBottom: '24px', display: 'block' }}>
-                <label style={{ display: 'block', fontSize: '14px', color: '#9ca3af', marginBottom: '8px' }}>Amount (XLM)</label>
-                <input
-                  type="number"
-                  step="any"
-                  placeholder="0.0"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  required
-                  style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #374151', backgroundColor: '#111827', color: '#fff', boxSizing: 'border-box', display: 'block' }}
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                style={{ width: '100%', padding: '14px', borderRadius: '6px', border: 'none', backgroundColor: '#7c3aed', color: '#fff', fontWeight: 'bold', fontSize: '16px', cursor: 'pointer', opacity: loading ? 0.5 : 1, display: 'block' }}
-              >
-                {loading ? 'Processing Transaction...' : 'Send XLM'}
-              </button>
+            <form onSubmit={handlePayment} style={{ textAlign: 'left' }}>
+              <input type="text" placeholder="Recipient G..." value={recipient} onChange={(e) => setRecipient(e.target.value)} required style={{ width: '100%', padding: '12px', borderRadius: '6px', backgroundColor: '#111827', color: '#fff', marginBottom: '12px', boxSizing: 'border-box' }} />
+              <input type="number" step="any" placeholder="Amount (XLM)" value={amount} onChange={(e) => setAmount(e.target.value)} required style={{ width: '100%', padding: '12px', borderRadius: '6px', backgroundColor: '#111827', color: '#fff', marginBottom: '12px', boxSizing: 'border-box' }} />
+              <button type="submit" disabled={loading} style={{ width: '100%', padding: '14px', borderRadius: '6px', backgroundColor: '#7c3aed', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>{loading ? 'Processing...' : 'Send XLM'}</button>
             </form>
           ) : (
-            <button
-              onClick={handleConnectWalletClick}
-              style={{ width: '100%', padding: '16px', borderRadius: '8px', border: 'none', backgroundColor: '#f59e0b', color: '#111827', fontWeight: 'bold', fontSize: '16px', cursor: 'pointer', textAlign: 'center' }}
-            >
-              🚀 Connect Multi-Wallet options
-            </button>
+            <button onClick={() => setIsModalOpen(true)} style={{ width: '100%', padding: '16px', borderRadius: '8px', backgroundColor: '#f59e0b', color: '#111827', fontWeight: 'bold', cursor: 'pointer' }}>🚀 Connect Multi-Wallet options</button>
           )}
         </div>
 
-        {/* Soroban Smart Contract Card */}
-        <div style={{ maxWidth: '500px', margin: '20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', boxSizing: 'border-box' }}>
-          <h2 style={{ color: '#a78bfa', marginBottom: '8px', fontSize: '24px' }}>Soroban Smart Contract</h2>
-          <p style={{ color: '#9ca3af', fontSize: '14px', marginBottom: '24px' }}>Interact with the deployed counter contract</p>
+        {/* Soroban Feedback Component */}
+        <div style={{ maxWidth: '500px', margin: '20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px', textAlign: 'left' }}>
+          <h2 style={{ color: '#a78bfa', marginBottom: '4px', fontSize: '24px' }}>Web3 Feedback Board</h2>
+          <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '20px' }}>Submit immutable logs directly to Soroban smart contract vectors</p>
 
-          <div style={{ backgroundColor: '#111827', padding: '16px', borderRadius: '8px', marginBottom: '24px', textAlign: 'center' }}>
-            <span style={{ fontSize: '12px', color: '#9ca3af', display: 'block', marginBottom: '4px' }}>CURRENT COUNT</span>
-            <strong style={{ fontSize: '32px', color: '#34d399' }}>{count}</strong>
-          </div>
-
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button onClick={fetchCurrentCount} style={{ flex: 1, padding: '12px', borderRadius: '6px', border: 'none', backgroundColor: '#4b5563', color: '#fff', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>
-              Refresh
+          <form onSubmit={handleSendFeedback}>
+            <input type="text" placeholder="Your Name / Handle" value={userName} onChange={(e) => setUserName(e.target.value)} required style={{ width: '100%', padding: '10px', borderRadius: '6px', backgroundColor: '#111827', color: '#fff', marginBottom: '10px', boxSizing: 'border-box', border: '1px solid #374151' }} />
+            <textarea placeholder="Write your on-chain feedback message..." value={feedbackInput} onChange={(e) => setFeedbackInput(e.target.value)} required style={{ width: '100%', padding: '10px', borderRadius: '6px', backgroundColor: '#111827', color: '#fff', marginBottom: '12px', boxSizing: 'border-box', border: '1px solid #374151', height: '80px', resize: 'none' }} />
+            <button type="submit" disabled={contractLoading || !pubKey} style={{ width: '100%', padding: '12px', borderRadius: '6px', backgroundColor: '#7c3aed', color: '#fff', fontWeight: 'bold', cursor: 'pointer', opacity: (!pubKey || contractLoading) ? 0.5 : 1 }}>
+              {contractLoading ? 'Submitting to Ledger...' : 'Submit Feedback'}
             </button>
-            <button
-              onClick={handleIncrement}
-              disabled={contractLoading || !pubKey}
-              style={{ flex: 1, padding: '12px', borderRadius: '6px', border: 'none', backgroundColor: '#7c3aed', color: '#fff', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', opacity: (contractLoading || !pubKey) ? 0.5 : 1 }}
-            >
-              {contractLoading ? 'Incrementing...' : 'Increment'}
-            </button>
-          </div>
-        </div>
+          </form>
 
-        {/* Multi-Wallet Custom Kit Modal Component */}
-        {isModalOpen && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-            <div style={{ backgroundColor: '#1f2937', padding: '32px', borderRadius: '12px', width: '90%', maxWidth: '400px', border: '1px solid #374151', textAlign: 'center' }}>
-              <h3 style={{ margin: '0 0 8px 0', color: '#fff', fontSize: '20px' }}>Select a Wallet</h3>
-              <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '24px' }}>Connect using available options for Stellar ecosystem</p>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <button onClick={() => selectWallet('freighter')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderRadius: '8px', border: '1px solid #4b5563', backgroundColor: '#111827', color: '#fff', fontWeight: 'bold', cursor: 'pointer', textAlign: 'left' }}>
-                  <span>Freighter Wallet</span>
-                  <span style={{ fontSize: '11px', color: '#34d399', backgroundColor: '#064e3b', padding: '2px 6px', borderRadius: '4px' }}>Active</span>
-                </button>
-                <button onClick={() => selectWallet('albedo')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderRadius: '8px', border: '1px solid #374151', backgroundColor: '#111827', color: '#9ca3af', fontWeight: 'bold', cursor: 'pointer', textAlign: 'left' }}>
-                  <span>Albedo Hub</span>
-                  <span style={{ fontSize: '10px', color: '#9ca3af' }}>Supported</span>
-                </button>
-                <button onClick={() => selectWallet('xbull')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderRadius: '8px', border: '1px solid #374151', backgroundColor: '#111827', color: '#9ca3af', fontWeight: 'bold', cursor: 'pointer', textAlign: 'left' }}>
-                  <span>xBull Wallet</span>
-                  <span style={{ fontSize: '10px', color: '#9ca3af' }}>Supported</span>
-                </button>
-              </div>
-
-              <button 
-                onClick={() => setIsModalOpen(false)}
-                style={{ marginTop: '24px', width: '100%', padding: '10px', backgroundColor: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: '13px' }}
-              >
-                Close Window
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Live Transaction History Card */}
-        {pubKey && transactions.length > 0 && (
-          <div style={{ maxWidth: '500px', margin: '20px auto', padding: '24px', backgroundColor: '#1f2937', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', boxSizing: 'border-box', textAlign: 'left' }}>
-            <h3 style={{ color: '#a78bfa', marginBottom: '16px', fontSize: '18px' }}>Recent Transactions</h3>
-            <div style={{ maxHeight: '220px', overflowY: 'auto', paddingRight: '5px' }}>
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                {transactions.map((tx) => (
-                  <li key={tx.id} style={{ padding: '10px 0', borderBottom: '1px solid #374151', fontSize: '12px', color: '#9ca3af', wordBreak: 'break-all' }}>
-                    <span style={{ color: '#34d399', fontWeight: 'bold' }}>Hash:</span> {tx.hash.substring(0, 12)}...{tx.hash.substring(52)}
-                    <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '6px' }}>
-                      🔗 <a href={`https://stellar.expert/explorer/testnet/tx/${tx.hash}`} target="_blank" rel="noreferrer" style={{ color: '#38bdf8', textDecoration: 'none' }}>View on Stellar.expert</a>
-                    </div>
-                    <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '4px' }}>
-                      Date: {new Date(tx.created_at).toLocaleString()}
-                    </div>
+          {/* On-Chain Logs */}
+          <h3 style={{ color: '#a78bfa', marginTop: '24px', fontSize: '16px', borderBottom: '1px solid #374151', paddingBottom: '8px' }}>On-Chain Logs ({feedbacks.length})</h3>
+          <div style={{ maxHeight: '240px', overflowY: 'auto', marginTop: '10px', paddingRight: '4px' }}>
+            {feedbacks.length === 0 ? <p style={{ color: '#6b7280', fontSize: '12px' }}>No feedbacks logged yet.</p> : (
+              <ul style={{ padding: 0, listStyle: 'none', margin: 0 }}>
+                {feedbacks.map((f, i) => (
+                  <li 
+                    key={i} 
+                    onClick={() => handleCopyText(`[ID: ${f.id}] ${f.user}: ${f.message}`, i)}
+                    style={{ 
+                      padding: '12px', 
+                      backgroundColor: '#111827', 
+                      borderRadius: '8px', 
+                      marginBottom: '8px', 
+                      fontSize: '13px', 
+                      color: '#d1d5db',
+                      border: '1px solid #1f2937',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = '#7c3aed';
+                      e.currentTarget.style.backgroundColor = '#1f2937';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = '#1f2937';
+                      e.currentTarget.style.backgroundColor = '#111827';
+                    }}
+                  >
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '10px' }}>
+                      <strong style={{ color: '#f59e0b' }}>#{f.id}</strong> {f.user}: {f.message}
+                    </span>
+                    <span style={{ fontSize: '11px', color: copiedIndex === i ? '#34d399' : '#9ca3af', backgroundColor: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', flexShrink: 0 }}>
+                      {copiedIndex === i ? '📋 Copied!' : '🗐 Copy'}
+                    </span>
                   </li>
                 ))}
               </ul>
+            )}
+          </div>
+
+          {/* Wallet Live Transactions List */}
+          {pubKey && (
+            <>
+              <h3 style={{ color: '#a78bfa', marginTop: '28px', fontSize: '16px', borderBottom: '1px solid #374151', paddingBottom: '8px' }}>Your Wallet Live Transactions</h3>
+              <div style={{ maxHeight: '220px', overflowY: 'auto', marginTop: '10px' }}>
+                {transactions.length === 0 ? <p style={{ color: '#6b7280', fontSize: '12px' }}>No transactions found for this account.</p> : (
+                  <ul style={{ padding: 0, listStyle: 'none', margin: 0 }}>
+                    {transactions.map((tx, idx) => (
+                      <li key={idx} style={{ padding: '12px', backgroundColor: '#111827', borderRadius: '8px', marginBottom: '8px', border: '1px solid #374151', fontSize: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', color: '#9ca3af' }}>
+                          <span>⏱ {new Date(tx.created_at).toLocaleTimeString()}</span>
+                          <span style={{ color: '#34d399', fontWeight: 'bold' }}>Fee: {tx.fee_charged} stroops</span>
+                        </div>
+                        <div style={{ backgroundColor: 'rgba(0,0,0,0.3)', padding: '6px', borderRadius: '4px', fontFamily: 'monospace', color: '#cbd5e1', wordBreak: 'break-all', marginBottom: '8px' }}>
+                          {`${tx.id.slice(0, 10)}...${tx.id.slice(-10)}`}
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button 
+                            onClick={() => handleCopyTxHash(tx.id, idx)}
+                            style={{ flex: 1, padding: '6px', backgroundColor: '#1f2937', border: '1px solid #4b5563', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+                          >
+                            {copiedTxIndex === idx ? '📋 Copied Hash!' : '🗐 Copy Hash'}
+                          </button>
+                          <a 
+                            href={`https://stellar.expert/explorer/testnet/tx/${tx.id}`} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            style={{ flex: 1, padding: '6px', backgroundColor: '#7c3aed', color: '#fff', borderRadius: '4px', textDecoration: 'none', textAlign: 'center', fontSize: '11px', fontWeight: 'bold', display: 'block' }}
+                          >
+                            🔍 Open Explorer
+                          </a>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
+
+        </div>
+
+        {/* 🔍 Smart Contract ID Decoder Search Section */}
+        <div style={{ maxWidth: '500px', margin: '20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px', textAlign: 'left', border: '1px solid #374151' }}>
+          <h2 style={{ color: '#a78bfa', marginBottom: '4px', fontSize: '20px' }}>🔍 Inspect Feedback by ID</h2>
+          <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '20px' }}>Input any numeric feedback ID below to fetch and decode the text entry stored in the contract ledger.</p>
+
+          <form onSubmit={handleSearchId} style={{ display: 'flex', gap: '8px' }}>
+            <input 
+              type="number" 
+              placeholder="Enter Feedback ID (e.g. 1)" 
+              value={searchId} 
+              onChange={(e) => setSearchId(e.target.value)} 
+              required 
+              style={{ flex: 1, padding: '12px', borderRadius: '6px', backgroundColor: '#111827', color: '#fff', border: '1px solid #374151', fontSize: '13px' }} 
+            />
+            <button type="submit" disabled={searchLoading} style={{ padding: '0 20px', borderRadius: '6px', backgroundColor: '#7c3aed', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>
+              {searchLoading ? 'Fetching...' : 'Search'}
+            </button>
+          </form>
+
+          {searchResult && (
+            <div style={{ marginTop: '20px', padding: '16px', backgroundColor: '#111827', borderRadius: '8px', border: '1px solid #34d399' }}>
+              <span style={{ fontSize: '11px', color: '#34d399', fontWeight: 'bold', backgroundColor: 'rgba(52, 211, 153, 0.1)', padding: '2px 6px', borderRadius: '4px' }}>✓ ON-CHAIN DATA EXTRACTED</span>
+              
+              <div style={{ marginTop: '12px' }}>
+                <span style={{ color: '#9ca3af', fontSize: '12px', display: 'block' }}>Feedback ID:</span>
+                <strong style={{ color: '#f59e0b', fontSize: '16px' }}>#{searchResult.id}</strong>
+              </div>
+
+              <div style={{ marginTop: '12px' }}>
+                <span style={{ color: '#9ca3af', fontSize: '12px', display: 'block' }}>User / Handle:</span>
+                <strong style={{ color: '#fff', fontSize: '16px' }}>{searchResult.name}</strong>
+              </div>
+
+              <div style={{ marginTop: '12px' }}>
+                <span style={{ color: '#9ca3af', fontSize: '12px', display: 'block' }}>Feedback Content:</span>
+                <div style={{ color: '#d1d5db', fontSize: '14px', backgroundColor: '#1f2937', padding: '10px', borderRadius: '6px', marginTop: '4px', borderLeft: '3px solid #7c3aed' }}>
+                  {searchResult.message}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Multi-Wallet Modal Component */}
+        {isModalOpen && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+            <div style={{ backgroundColor: '#1f2937', padding: '32px', borderRadius: '12px', width: '90%', maxWidth: '400px', border: '1px solid #374151', textAlign: 'center' }}>
+              <h3 style={{ color: '#fff', marginBottom: '4px' }}>Select a Wallet</h3>
+              <p style={{ color: '#9ca3af', fontSize: '12px', marginBottom: '20px' }}>Connect with Soroban testnet parameters</p>
+              <button onClick={handleConnectFreighter} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>Freighter Wallet</button>
+              <button onClick={() => setIsModalOpen(false)} style={{ width: '100%', padding: '10px', backgroundColor: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>Close Window</button>
             </div>
           </div>
         )}
 
-        {/* Status Responses */}
-        <div style={{ maxWidth: '500px', margin: '0 auto' }}>
-          {error && (
-            <div style={{ padding: '12px', backgroundColor: '#7f1d1d', border: '1px solid #f87171', borderRadius: '6px', color: '#fca5a5', fontSize: '14px', wordBreak: 'break-all', marginBottom: '10px' }}>
-              {error}
-            </div>
-          )}
-
-          {txHash && (
-            <div style={{ padding: '12px', backgroundColor: '#064e3b', border: '1px solid #34d399', borderRadius: '6px', color: '#a7f3d0', fontSize: '14px', wordBreak: 'break-all', textAlign: 'left' }}>
-              <strong style={{ display: 'block', color: '#34d399' }}>✓ Transaction Successful!</strong>
-              <span style={{ fontSize: '11px', display: 'block', marginTop: '6px' }}>Hash: {txHash}</span>
-              <div style={{ marginTop: '8px', fontSize: '12px' }}>
-                ➡️ <a href={`https://stellar.expert/explorer/testnet/tx/${txHash}`} target="_blank" rel="noreferrer" style={{ color: '#38bdf8', fontWeight: 'bold' }}>Verifiable Live Ledger Explorer Link</a>
-              </div>
-            </div>
-          )}
+        {/* Error notification display */}
+        <div style={{ maxWidth: '500px', margin: '10px auto' }}>
+          {error && <div style={{ padding: '12px', backgroundColor: '#7f1d1d', borderRadius: '6px', color: '#fca5a5', fontSize: '14px', marginBottom: '10px' }}>{error}</div>}
         </div>
 
       </pubKeyData.Provider>
