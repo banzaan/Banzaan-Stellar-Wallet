@@ -2,7 +2,7 @@ import './App.css';
 import Header from './components/Header';
 import { useState, useEffect, createContext } from 'react';
 import { Horizon, TransactionBuilder, Networks, Asset, Operation, BASE_FEE, TimeoutInfinite, Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
-import { StellarWalletsKit, WalletNetwork, allowAllModules } from "@creit.tech/stellar-wallets-kit";
+import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 
 const pubKeyData = createContext();
 const server = new Horizon.Server("https://horizon-testnet.stellar.org");
@@ -11,10 +11,9 @@ const CONTRACT_ID = 'CC3I5V57TQDFKK3CFIOHC3RYXHRG4WPRLHFZC6VHRZEFRRWM4XWHWOGC';
 const sorobanRpc = new rpc.Server('https://soroban-testnet.stellar.org');
 const networkPassphrase = 'Test SDF Network ; September 2015';
 
-// Initialize Stellar Wallets Kit for Multi-Wallet support
-const kit = new StellarWalletsKit({
-  network: WalletNetwork.TESTNET,
-  modules: allowAllModules(),
+// Initialize Stellar Wallets Kit (v2 Standard)
+StellarWalletsKit.init({
+  networkPassphrase: networkPassphrase
 });
 
 function App() {
@@ -57,25 +56,17 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubKey]);
 
-  // NEW: Multi-Wallet Connection Handler using StellarWalletsKit Modal
+  // Wallet Connection Handler (v2 Static Method)
   const handleConnectWallet = async () => {
     try {
       setError("");
-      await kit.openModal({
-        onWalletSelected: async (option) => {
-          try {
-            kit.setWallet(option.id);
-            const { address } = await kit.getAddress();
-            _setPubKey(address);
-          } catch (e) {
-            console.error(e);
-            setError("Failed to get wallet address.");
-          }
-        },
-      });
+      const { address } = await StellarWalletsKit.getAddress();
+      if (address) {
+        _setPubKey(address);
+      }
     } catch (e) {
       console.error(e);
-      setError("Wallet connection modal closed or failed.");
+      setError("Wallet connection declined or closed.");
     }
   };
 
@@ -180,16 +171,18 @@ function App() {
       
       let signedResult;
       try {
-        // Updated to use the Multi-wallet Kit for signing
-        signedResult = await kit.signTransaction(xdrString, { network: "TESTNET", networkPassphrase });
+        const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdrString, {
+          networkPassphrase: networkPassphrase,
+          address: pubKey
+        });
+        signedResult = signedTxXdr;
       } catch (walletError) {
         setError("UserReject: Transaction signing was canceled by the user.");
         setContractLoading(false);
         return;
       }
 
-      const finalXdr = typeof signedResult === 'string' ? signedResult : (signedResult.signedTxXdr || signedResult);
-      const sendTxResult = await sorobanRpc.sendTransaction(TransactionBuilder.fromXDR(finalXdr, networkPassphrase));
+      const sendTxResult = await sorobanRpc.sendTransaction(TransactionBuilder.fromXDR(signedResult, networkPassphrase));
       
       if (sendTxResult.status !== 'ERROR') {
         setTxHash(sendTxResult.hash);
@@ -224,15 +217,17 @@ function App() {
       const xdrString = transaction.toXDR();
       let signedResult;
       try {
-        // Updated to use the Multi-wallet Kit for signing
-        signedResult = await kit.signTransaction(xdrString, { network: "TESTNET", networkPassphrase: Networks.TESTNET });
+        const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdrString, {
+          networkPassphrase: Networks.TESTNET,
+          address: pubKey
+        });
+        signedResult = signedTxXdr;
       } catch (err) {
         setError("UserReject: Transaction signing was canceled.");
         setLoading(false);
         return;
       }
-      const finalXdr = typeof signedResult === 'string' ? signedResult : (signedResult.signedTxXdr || signedResult);
-      const txResponse = await server.submitTransaction(TransactionBuilder.fromXDR(finalXdr, Networks.TESTNET));
+      const txResponse = await server.submitTransaction(TransactionBuilder.fromXDR(signedResult, Networks.TESTNET));
       setTxHash(txResponse.hash);
       fetchBalanceAfterTx(pubKey);
       fetchTransactionHistory(pubKey);
@@ -416,7 +411,7 @@ function App() {
 
         </div>
 
-        {/* 🔍 Smart Contract ID Decoder Search Section */}
+        {/* Smart Contract ID Decoder Search Section */}
         <div style={{ maxWidth: '500px', margin: '20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px', textAlign: 'left', border: '1px solid #374151' }}>
           <h2 style={{ color: '#a78bfa', marginBottom: '4px', fontSize: '20px' }}>🔍 Inspect Feedback by ID</h2>
           <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '20px' }}>Input any numeric feedback ID below to fetch and decode the text entry stored in the contract ledger.</p>
@@ -462,7 +457,7 @@ function App() {
         {/* Success Tx Hash Notification */}
         {txHash && (
           <div style={{ maxWidth: '500px', margin: '10px auto', padding: '12px', backgroundColor: '#065f46', borderRadius: '6px', color: '#a7f3d0', fontSize: '14px', wordBreak: 'break-all', textAlign: 'left' }}>
-            🎉 Transaction Successful! Hash: {txHash}
+            Transaction Successful! Hash: {txHash}
           </div>
         )}
         {/* Error notification display */}
