@@ -20,6 +20,7 @@ An advanced, production-grade Web3 decentralized application (dApp) built on the
 
 ---
 
+
 ## 📜 Soroban Smart Contract Architecture
 
 The backend decentralized ledger layer is powered by a custom **Rust-based Soroban Smart Contract** (`lib.rs`). It acts as an immutable decentralized feedback board tracking user submissions inside the persistent storage vectors of the Stellar Testnet.
