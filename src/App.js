@@ -2,7 +2,6 @@ import './App.css';
 import Header from './components/Header';
 import { useState, useEffect, createContext } from 'react';
 import { Horizon, TransactionBuilder, Networks, Asset, Operation, BASE_FEE, TimeoutInfinite, Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
-// Removed WalletType import to fix Vercel build crash
 import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 
 const pubKeyData = createContext();
@@ -57,12 +56,13 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubKey]);
 
-  // Multi-Wallet Connection Handler using safe native strings
+  // FIX: Using setWalletMode instead of setWallet to fix the runtime crash
   const handleConnectWallet = async (walletId) => {
     try {
       setError("");
-      // Using direct wallet identifiers approved by Stellar Wallets Kit standard
-      kit.setWallet(walletId);
+      
+      // Update wallet target using the new SDK standard method
+      await kit.setWalletMode(walletId);
       
       const { address } = await kit.getAddress();
       if (address) {
