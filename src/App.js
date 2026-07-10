@@ -463,7 +463,12 @@ function App() {
             </div>
           </div>
         )}
-
+        {/* Success Tx Hash Notification */}
+        {txHash && (
+          <div style={{ maxWidth: '500px', margin: '10px auto', padding: '12px', backgroundColor: '#065f46', borderRadius: '6px', color: '#a7f3d0', fontSize: '14px', wordBreak: 'break-all', textAlign: 'left' }}>
+            🎉 Transaction Successful! Hash: {txHash}
+          </div>
+        )}
         {/* Error notification display */}
         <div style={{ maxWidth: '500px', margin: '10px auto' }}>
           {error && <div style={{ padding: '12px', backgroundColor: '#7f1d1d', borderRadius: '6px', color: '#fca5a5', fontSize: '14px', marginBottom: '10px' }}>{error}</div>}
