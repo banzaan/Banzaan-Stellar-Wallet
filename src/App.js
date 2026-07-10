@@ -2,7 +2,7 @@ import './App.css';
 import Header from './components/Header';
 import { useState, useEffect, createContext } from 'react';
 import { Horizon, TransactionBuilder, Networks, Asset, Operation, BASE_FEE, TimeoutInfinite, Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
-import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
+import { StellarWalletsKit, WalletNetwork } from "@creit.tech/stellar-wallets-kit";
 
 const pubKeyData = createContext();
 const server = new Horizon.Server("https://horizon-testnet.stellar.org");
@@ -11,9 +11,9 @@ const CONTRACT_ID = 'CC3I5V57TQDFKK3CFIOHC3RYXHRG4WPRLHFZC6VHRZEFRRWM4XWHWOGC';
 const sorobanRpc = new rpc.Server('https://soroban-testnet.stellar.org');
 const networkPassphrase = 'Test SDF Network ; September 2015';
 
-// Initialize the Multi-Wallet Kit globally
+// Initialize the Multi-Wallet Kit correctly for newer package standards
 const kit = new StellarWalletsKit({
-  networkPassphrase: networkPassphrase,
+  network: WalletNetwork.TESTNET,
   allowMultiWallet: true
 });
 
@@ -56,15 +56,16 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubKey]);
 
-  // FIX: Using setWalletMode instead of setWallet to fix the runtime crash
+  // FIX: Using kit.connect() with direct target IDs to support latest standard signatures
   const handleConnectWallet = async (walletId) => {
     try {
       setError("");
       
-      // Update wallet target using the new SDK standard method
-      await kit.setWalletMode(walletId);
-      
-      const { address } = await kit.getAddress();
+      // Requesting wallet connection session directly
+      const { address } = await kit.connect({
+        wallet: walletId
+      });
+
       if (address) {
         _setPubKey(address);
         setIsModalOpen(false);
@@ -454,7 +455,6 @@ function App() {
           )}
         </div>
 
-        {/* Updated Modal using native string parameters instead of WalletType enum */}
         {isModalOpen && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
             <div style={{ backgroundColor: '#1f2937', padding: '32px', borderRadius: '12px', width: '90%', maxWidth: '400px', border: '1px solid #374151', textAlign: 'center' }}>
