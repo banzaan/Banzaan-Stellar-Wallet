@@ -2,8 +2,9 @@ import './App.css';
 import Header from './components/Header';
 import { useState, useEffect, createContext } from 'react';
 import { Horizon, TransactionBuilder, Networks, Asset, Operation, BASE_FEE, TimeoutInfinite, Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
-import { signTransaction } from '@stellar/freighter-api';
-import { StellarWalletsKit, WalletNetwork, allowAllModules, FREIGHTER_ID } from "@creit.tech/stellar-wallets-kit";
+
+// Standard Multi-Wallet Kit imports
+import { StellarWalletsKit, WalletNetwork, FREIGHTER_ID, ALBEDO_ID } from '@creit.tech/stellar-wallets-kit';
 
 const pubKeyData = createContext();
 const server = new Horizon.Server("https://horizon-testnet.stellar.org");
@@ -12,13 +13,13 @@ const CONTRACT_ID = 'CC3I5V57TQDFKK3CFIOHC3RYXHRG4WPRLHFZC6VHRZEFRRWM4XWHWOGC';
 const sorobanRpc = new rpc.Server('https://soroban-testnet.stellar.org');
 const networkPassphrase = 'Test SDF Network ; September 2015';
 
+// Build the standard toolkit instance
 let kitInstance = null;
 function getKit() {
   if (!kitInstance) {
     kitInstance = new StellarWalletsKit({
       network: WalletNetwork.TESTNET,
-      selectedWalletId: FREIGHTER_ID,
-      modules: allowAllModules(),
+      selectedWalletId: FREIGHTER_ID
     });
   }
   return kitInstance;
@@ -38,7 +39,6 @@ function App() {
   const [userName, setUserName] = useState("");
   const [feedbacks, setFeedbacks] = useState([]);
   const [contractLoading, setContractLoading] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [copiedTxIndex, setCopiedTxIndex] = useState(null);
@@ -64,6 +64,7 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubKey]);
 
+  // Standard multi-wallet triggers modal automatically
   const handleConnectWalletKit = async () => {
     try {
       setError("");
@@ -79,7 +80,6 @@ function App() {
             const account = await server.loadAccount(publicKey);
             const nativeBalance = account.balances.find(b => b.asset_type === 'native');
             setBalance(nativeBalance ? Number(nativeBalance.balance).toFixed(2) : "0.00");
-            setIsModalOpen(false);
           }
         },
         onError: (err) => {
