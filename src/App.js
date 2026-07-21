@@ -1,38 +1,67 @@
 import './App.css';
 import Header from './components/Header';
+import Landing from './components/Landing';
+import WalletModal from './components/WalletModal';
+import AnalyticsPanel from './components/AnalyticsPanel';
+import PaymentPanel from './components/PaymentPanel';
+import FeedbackPanel from './components/FeedbackPanel';
 import { useState, useEffect, createContext } from 'react';
-import { Horizon, TransactionBuilder, Networks, Asset, Operation, BASE_FEE, TimeoutInfinite, Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
+import {
+  Horizon,
+  TransactionBuilder,
+  Networks,
+  Asset,
+  Operation,
+  BASE_FEE,
+  TimeoutInfinite,
+  Contract,
+  rpc,
+  scValToNative,
+  xdr,
+} from '@stellar/stellar-sdk';
 import { signTransaction } from '@stellar/freighter-api';
-import { checkConnection, retrievePublicKey, getBalance } from "./components/Freighter";
+import { checkConnection, retrievePublicKey, getBalance } from './components/Freighter';
+import { LayoutDashboard, Send, MessageSquareText, CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 const pubKeyData = createContext();
-const server = new Horizon.Server("https://horizon-testnet.stellar.org");
+const server = new Horizon.Server('https://horizon-testnet.stellar.org');
 
-const CONTRACT_ID = 'CC3I5V57TQDFKK3CFIOHC3RYXHRG4WPRLHFZC6VHRZEFRRWM4XWHWOGC'; 
+const CONTRACT_ID = 'CC3I5V57TQDFKK3CFIOHC3RYXHRG4WPRLHFZC6VHRZEFRRWM4XWHWOGC';
 const sorobanRpc = new rpc.Server('https://soroban-testnet.stellar.org');
 const networkPassphrase = 'Test SDF Network ; September 2015';
 
+const TABS = [
+  { id: 'analytics', label: 'Analytics', icon: LayoutDashboard },
+  { id: 'payments', label: 'Payments', icon: Send },
+  { id: 'feedback', label: 'Feedback', icon: MessageSquareText },
+];
+
 function App() {
-  const [pubKey, _setPubKey] = useState("");
-  const [balance, setBalance] = useState("0");
-  const [recipient, setRecipient] = useState("");
-  const [amount, setAmount] = useState("");
-  const [txHash, setTxHash] = useState("");
+  const [view, setView] = useState('landing'); // 'landing' | 'dashboard'
+  const [activeTab, setActiveTab] = useState('analytics');
+  const [notice, setNotice] = useState('');
+
+  const [pubKey, _setPubKey] = useState('');
+  const [balance, setBalance] = useState('0');
+  const [recipient, setRecipient] = useState('');
+  const [amount, setAmount] = useState('');
+  const [txHash, setTxHash] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  
+  const [error, setError] = useState('');
+
   // Feedback States
-  const [feedbackInput, setFeedbackInput] = useState("");
-  const [userName, setUserName] = useState("");
+  const [feedbackInput, setFeedbackInput] = useState('');
+  const [userName, setUserName] = useState('');
   const [feedbacks, setFeedbacks] = useState([]);
   const [contractLoading, setContractLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [copiedTxIndex, setCopiedTxIndex] = useState(null);
 
-  // Search States (Modified for ID Search)
-  const [searchId, setSearchId] = useState("");
+  // Search States
+  const [searchId, setSearchId] = useState('');
   const [searchResult, setSearchResult] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
 
@@ -40,11 +69,12 @@ function App() {
     if (pubKey) {
       fetchTransactionHistory(pubKey);
     } else {
-      setBalance("0");
+      setBalance('0');
       setTransactions([]);
     }
-    setTxHash("");
-    setError("");
+    setTxHash('');
+    setError('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubKey]);
 
   useEffect(() => {
@@ -53,10 +83,11 @@ function App() {
   }, [pubKey]);
 
   const handleConnectFreighter = async () => {
+    setConnecting(true);
     try {
       const allowed = await checkConnection();
       if (!allowed) {
-        setError("Permission denied by wallet.");
+        setError('Permission denied by wallet.');
         return;
       }
 
@@ -66,26 +97,35 @@ function App() {
       _setPubKey(key);
       setBalance(Number(bal).toFixed(2));
       setIsModalOpen(false);
+      setView('dashboard');
     } catch (e) {
       console.error(e);
-      setError("Wallet connection failed.");
+      setError('Wallet connection failed.');
+    } finally {
+      setConnecting(false);
     }
+  };
+
+  const handleSocialLogin = (provider) => {
+    const name = provider === 'telegram' ? 'Telegram' : 'X';
+    setNotice(`${name} sign-in is coming soon. Meanwhile, connect a wallet for full access.`);
+    setView('dashboard');
   };
 
   const fetchBalanceAfterTx = async (address) => {
     try {
       const account = await server.loadAccount(address);
-      const nativeBalance = account.balances.find(b => b.asset_type === 'native');
-      setBalance(nativeBalance ? Number(nativeBalance.balance).toFixed(2) : "0");
+      const nativeBalance = account.balances.find((b) => b.asset_type === 'native');
+      setBalance(nativeBalance ? Number(nativeBalance.balance).toFixed(2) : '0');
     } catch (err) {
-      setBalance("Account Not Funded"); 
+      setBalance('Account Not Funded');
     }
   };
 
   const fetchTransactionHistory = async (address) => {
     if (!address) return;
     try {
-      const txRecords = await server.transactions().forAccount(address).order("desc").limit(5).call();
+      const txRecords = await server.transactions().forAccount(address).order('desc').limit(5).call();
       setTransactions(txRecords.records);
     } catch (err) {
       console.error(err);
@@ -93,19 +133,19 @@ function App() {
   };
 
   const handleDisconnect = () => {
-    _setPubKey("");
-    setBalance("0");
+    _setPubKey('');
+    setBalance('0');
     setTransactions([]);
-    setError("");
-    setTxHash("");
+    setError('');
+    setTxHash('');
+    setView('landing');
   };
 
-  // NEW: Helper function to simulate a read-only transaction on Soroban
   const simulateContractCall = async (methodName, params = []) => {
     const contract = new Contract(CONTRACT_ID);
-    const activePubKey = pubKey || "GB7U7DTUDKXTNZFUT3Q7XWEXL7G4LXN5VNECEIWDXU6LMLD7KXTND7TU";
+    const activePubKey = pubKey || 'GB7U7DTUDKXTNZFUT3Q7XWEXL7G4LXN5VNECEIWDXU6LMLD7KXTND7TU';
     const account = await server.loadAccount(activePubKey);
-    
+
     const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
       .addOperation(contract.call(methodName, ...params))
       .setTimeout(TimeoutInfinite)
@@ -118,10 +158,8 @@ function App() {
     return null;
   };
 
-  // NEW: Fetch all feedbacks dynamically based on the current total counter
   const handleFetchAllFeedbacks = async () => {
     try {
-      // 1. Get the total number of feedbacks
       const totalFeedbacks = await simulateContractCall('get_total_feedbacks');
       if (!totalFeedbacks || totalFeedbacks === 0) {
         setFeedbacks([]);
@@ -129,40 +167,35 @@ function App() {
       }
 
       const allFeedbacks = [];
-      // 2. Loop through and fetch each feedback by its ID
       for (let i = 1; i <= totalFeedbacks; i++) {
         const item = await simulateContractCall('get_feedback_by_id', [xdr.ScVal.scvU32(i)]);
         if (item) {
-          allFeedbacks.push(item); // item will be an object: { id, user, message }
+          allFeedbacks.push(item);
         }
       }
-      // Show newest first
       setFeedbacks(allFeedbacks.reverse());
     } catch (err) {
-      console.error("Error fetching feedbacks:", err);
+      console.error('Error fetching feedbacks:', err);
     }
   };
 
   const handleSendFeedback = async (e) => {
     e.preventDefault();
     if (!pubKey) {
-      setError("Missing Key: Please connect your wallet first.");
+      setError('Missing Key: Please connect your wallet first.');
       return;
     }
     if (!feedbackInput || !userName) return;
 
     setContractLoading(true);
-    setError("");
-    setTxHash("");
-    
+    setError('');
+    setTxHash('');
+
     try {
       const contract = new Contract(CONTRACT_ID);
       const account = await server.loadAccount(pubKey);
 
-      const params = [
-        xdr.ScVal.scvString(userName),
-        xdr.ScVal.scvString(feedbackInput)
-      ];
+      const params = [xdr.ScVal.scvString(userName), xdr.ScVal.scvString(feedbackInput)];
 
       const baseTx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
         .addOperation(contract.call('send_feedback', ...params))
@@ -171,22 +204,22 @@ function App() {
 
       const preparedTx = await sorobanRpc.prepareTransaction(baseTx);
       const xdrString = preparedTx.toXDR();
-      
+
       let signedResult;
       try {
-        signedResult = await signTransaction(xdrString, { network: "TESTNET", networkPassphrase });
+        signedResult = await signTransaction(xdrString, { network: 'TESTNET', networkPassphrase });
       } catch (walletError) {
-        setError("UserReject: Transaction signing was canceled by the user.");
+        setError('UserReject: Transaction signing was canceled by the user.');
         setContractLoading(false);
         return;
       }
 
       const finalXdr = typeof signedResult === 'string' ? signedResult : (signedResult.signedTxXdr || signedResult);
       const sendTxResult = await sorobanRpc.sendTransaction(TransactionBuilder.fromXDR(finalXdr, networkPassphrase));
-      
+
       if (sendTxResult.status !== 'ERROR') {
         setTxHash(sendTxResult.hash);
-        setFeedbackInput("");
+        setFeedbackInput('');
         setTimeout(() => {
           handleFetchAllFeedbacks();
           fetchTransactionHistory(pubKey);
@@ -196,7 +229,7 @@ function App() {
         setError(`Soroban RPC Error: ${JSON.stringify(sendTxResult)}`);
       }
     } catch (err) {
-      setError("UserReject: Transaction error or signing canceled.");
+      setError('UserReject: Transaction error or signing canceled.');
     } finally {
       setContractLoading(false);
     }
@@ -205,8 +238,8 @@ function App() {
   const handlePayment = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError("");
-    setTxHash("");
+    setError('');
+    setTxHash('');
     try {
       const account = await server.loadAccount(pubKey);
       const transaction = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
@@ -217,9 +250,9 @@ function App() {
       const xdrString = transaction.toXDR();
       let signedResult;
       try {
-        signedResult = await signTransaction(xdrString, { network: "TESTNET", networkPassphrase: Networks.TESTNET });
+        signedResult = await signTransaction(xdrString, { network: 'TESTNET', networkPassphrase: Networks.TESTNET });
       } catch (err) {
-        setError("UserReject: Transaction signing was canceled.");
+        setError('UserReject: Transaction signing was canceled.');
         setLoading(false);
         return;
       }
@@ -228,34 +261,33 @@ function App() {
       setTxHash(txResponse.hash);
       fetchBalanceAfterTx(pubKey);
       fetchTransactionHistory(pubKey);
-      setRecipient("");
-      setAmount("");
+      setRecipient('');
+      setAmount('');
     } catch (err) {
-      setError("UserReject: Transaction canceled.");
+      setError('UserReject: Transaction canceled.');
     } finally {
       setLoading(false);
     }
   };
 
-  // MODIFIED: Search directly inside contract by ID instead of pulling transaction hashes
   const handleSearchId = async (e) => {
     e.preventDefault();
     if (!searchId) return;
 
     setSearchLoading(true);
     setSearchResult(null);
-    setError("");
+    setError('');
 
     try {
       const parsedId = parseInt(searchId, 10);
       if (isNaN(parsedId)) {
-        setError("Please enter a valid numeric ID.");
+        setError('Please enter a valid numeric ID.');
         setSearchLoading(false);
         return;
       }
 
       const item = await simulateContractCall('get_feedback_by_id', [xdr.ScVal.scvU32(parsedId)]);
-      
+
       if (item) {
         setSearchResult({ id: item.id, name: item.user, message: item.message });
       } else {
@@ -263,7 +295,7 @@ function App() {
       }
     } catch (err) {
       console.error(err);
-      setError("Failed to query the smart contract storage.");
+      setError('Failed to query the smart contract storage.');
     } finally {
       setSearchLoading(false);
     }
@@ -281,203 +313,156 @@ function App() {
     setTimeout(() => setCopiedTxIndex(null), 2000);
   };
 
-  return (
-    <div className="App" style={{ backgroundColor: '#111827', minHeight: '100vh', color: '#fff', fontFamily: 'sans-serif', paddingBottom: '40px' }}>
-      <Header pubKey={pubKey} balance={balance} />
-      
-      <pubKeyData.Provider value={pubKey}>
-        
-        {/* Simple Payment Component */}
-        <div style={{ maxWidth: '500px', margin: '40px auto 20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <h2 style={{ color: '#a78bfa', margin: 0, fontSize: '24px' }}>Stellar Simple Payment</h2>
-            {pubKey && <button onClick={handleDisconnect} style={{ padding: '6px 12px', backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Disconnect</button>}
+  if (view === 'landing') {
+    return (
+      <>
+        <Landing
+          onWalletConnect={() => setIsModalOpen(true)}
+          onSocialLogin={handleSocialLogin}
+        />
+        <WalletModal
+          open={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          onConnectFreighter={handleConnectFreighter}
+          connecting={connecting}
+        />
+        {error && (
+          <div className="fixed bottom-4 left-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-lg border border-destructive/50 bg-card p-3 text-sm text-destructive">
+            {error}
           </div>
-          {pubKey && (
-            <div style={{ backgroundColor: '#111827', padding: '16px', borderRadius: '8px', marginBottom: '24px', textAlign: 'left' }}>
-              <span style={{ fontSize: '12px', color: '#9ca3af', display: 'block' }}>YOUR BALANCE</span>
-              <strong style={{ fontSize: '24px', color: '#34d399' }}>{balance} XLM</strong>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background pb-16 font-sans text-foreground">
+      <Header
+        pubKey={pubKey}
+        balance={balance}
+        onConnect={() => setIsModalOpen(true)}
+        onDisconnect={handleDisconnect}
+      />
+
+      <pubKeyData.Provider value={pubKey}>
+        <main className="mx-auto max-w-6xl px-6 pt-8">
+          {/* Page heading + tabs */}
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="font-heading text-2xl font-bold">Dashboard</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Live data from Horizon and the Soroban feedback contract
+              </p>
+            </div>
+            <nav aria-label="Dashboard sections" className="flex gap-1 rounded-lg border border-border bg-card p-1">
+              {TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  aria-current={activeTab === tab.id ? 'page' : undefined}
+                  className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                    activeTab === tab.id
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <tab.icon size={15} aria-hidden="true" />
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          </div>
+
+          {/* Notice banner */}
+          {notice && (
+            <div className="mt-6 flex items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/10 px-4 py-3 text-sm text-foreground">
+              <span className="flex items-center gap-2">
+                <AlertCircle size={16} className="shrink-0 text-primary" aria-hidden="true" />
+                {notice}
+              </span>
+              <button onClick={() => setNotice('')} aria-label="Dismiss" className="text-muted-foreground hover:text-foreground">
+                <X size={16} />
+              </button>
             </div>
           )}
-          {pubKey ? (
-            <form onSubmit={handlePayment} style={{ textAlign: 'left' }}>
-              <input type="text" placeholder="Recipient G..." value={recipient} onChange={(e) => setRecipient(e.target.value)} required style={{ width: '100%', padding: '12px', borderRadius: '6px', backgroundColor: '#111827', color: '#fff', marginBottom: '12px', boxSizing: 'border-box' }} />
-              <input type="number" step="any" placeholder="Amount (XLM)" value={amount} onChange={(e) => setAmount(e.target.value)} required style={{ width: '100%', padding: '12px', borderRadius: '6px', backgroundColor: '#111827', color: '#fff', marginBottom: '12px', boxSizing: 'border-box' }} />
-              <button type="submit" disabled={loading} style={{ width: '100%', padding: '14px', borderRadius: '6px', backgroundColor: '#7c3aed', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>{loading ? 'Processing...' : 'Send XLM'}</button>
-            </form>
-          ) : (
-            <button onClick={() => setIsModalOpen(true)} style={{ width: '100%', padding: '16px', borderRadius: '8px', backgroundColor: '#f59e0b', color: '#111827', fontWeight: 'bold', cursor: 'pointer' }}>🚀 Connect Multi-Wallet options</button>
+
+          {/* Success / error notifications */}
+          {txHash && (
+            <div className="mt-6 flex items-start gap-2 break-all rounded-lg border border-accent/40 bg-accent/10 px-4 py-3 text-sm text-foreground">
+              <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
+              <span>
+                Transaction successful. Hash: <span className="font-mono text-xs">{txHash}</span>
+              </span>
+            </div>
           )}
-        </div>
+          {error && (
+            <div className="mt-6 flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+              <span>{error}</span>
+            </div>
+          )}
 
-        {/* Soroban Feedback Component */}
-        <div style={{ maxWidth: '500px', margin: '20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px', textAlign: 'left' }}>
-          <h2 style={{ color: '#a78bfa', marginBottom: '4px', fontSize: '24px' }}>Web3 Feedback Board</h2>
-          <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '20px' }}>Submit immutable logs directly to Soroban smart contract vectors</p>
-
-          <form onSubmit={handleSendFeedback}>
-            <input type="text" placeholder="Your Name / Handle" value={userName} onChange={(e) => setUserName(e.target.value)} required style={{ width: '100%', padding: '10px', borderRadius: '6px', backgroundColor: '#111827', color: '#fff', marginBottom: '10px', boxSizing: 'border-box', border: '1px solid #374151' }} />
-            <textarea placeholder="Write your on-chain feedback message..." value={feedbackInput} onChange={(e) => setFeedbackInput(e.target.value)} required style={{ width: '100%', padding: '10px', borderRadius: '6px', backgroundColor: '#111827', color: '#fff', marginBottom: '12px', boxSizing: 'border-box', border: '1px solid #374151', height: '80px', resize: 'none' }} />
-            <button type="submit" disabled={contractLoading || !pubKey} style={{ width: '100%', padding: '12px', borderRadius: '6px', backgroundColor: '#7c3aed', color: '#fff', fontWeight: 'bold', cursor: 'pointer', opacity: (!pubKey || contractLoading) ? 0.5 : 1 }}>
-              {contractLoading ? 'Submitting to Ledger...' : 'Submit Feedback'}
-            </button>
-          </form>
-
-          {/* On-Chain Logs */}
-          <h3 style={{ color: '#a78bfa', marginTop: '24px', fontSize: '16px', borderBottom: '1px solid #374151', paddingBottom: '8px' }}>On-Chain Logs ({feedbacks.length})</h3>
-          <div style={{ maxHeight: '240px', overflowY: 'auto', marginTop: '10px', paddingRight: '4px' }}>
-            {feedbacks.length === 0 ? <p style={{ color: '#6b7280', fontSize: '12px' }}>No feedbacks logged yet.</p> : (
-              <ul style={{ padding: 0, listStyle: 'none', margin: 0 }}>
-                {feedbacks.map((f, i) => (
-                  <li 
-                    key={i} 
-                    onClick={() => handleCopyText(`[ID: ${f.id}] ${f.user}: ${f.message}`, i)}
-                    style={{ 
-                      padding: '12px', 
-                      backgroundColor: '#111827', 
-                      borderRadius: '8px', 
-                      marginBottom: '8px', 
-                      fontSize: '13px', 
-                      color: '#d1d5db',
-                      border: '1px solid #1f2937',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = '#7c3aed';
-                      e.currentTarget.style.backgroundColor = '#1f2937';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = '#1f2937';
-                      e.currentTarget.style.backgroundColor = '#111827';
-                    }}
-                  >
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '10px' }}>
-                      <strong style={{ color: '#f59e0b' }}>#{f.id}</strong> {f.user}: {f.message}
-                    </span>
-                    <span style={{ fontSize: '11px', color: copiedIndex === i ? '#34d399' : '#9ca3af', backgroundColor: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', flexShrink: 0 }}>
-                      {copiedIndex === i ? '📋 Copied!' : '🗐 Copy'}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+          {/* Tab content */}
+          <div className="mt-8">
+            {activeTab === 'analytics' && (
+              <AnalyticsPanel
+                transactions={transactions}
+                feedbacks={feedbacks}
+                balance={balance}
+                pubKey={pubKey}
+              />
+            )}
+            {activeTab === 'payments' && (
+              <div className="mx-auto max-w-xl">
+                <PaymentPanel
+                  pubKey={pubKey}
+                  balance={balance}
+                  recipient={recipient}
+                  setRecipient={setRecipient}
+                  amount={amount}
+                  setAmount={setAmount}
+                  loading={loading}
+                  onPay={handlePayment}
+                  onConnect={() => setIsModalOpen(true)}
+                  transactions={transactions}
+                  onCopyTxHash={handleCopyTxHash}
+                  copiedTxIndex={copiedTxIndex}
+                />
+              </div>
+            )}
+            {activeTab === 'feedback' && (
+              <div className="mx-auto max-w-xl">
+                <FeedbackPanel
+                  pubKey={pubKey}
+                  userName={userName}
+                  setUserName={setUserName}
+                  feedbackInput={feedbackInput}
+                  setFeedbackInput={setFeedbackInput}
+                  contractLoading={contractLoading}
+                  onSendFeedback={handleSendFeedback}
+                  feedbacks={feedbacks}
+                  onCopyText={handleCopyText}
+                  copiedIndex={copiedIndex}
+                  searchId={searchId}
+                  setSearchId={setSearchId}
+                  onSearchId={handleSearchId}
+                  searchLoading={searchLoading}
+                  searchResult={searchResult}
+                />
+              </div>
             )}
           </div>
-
-          {/* Wallet Live Transactions List */}
-          {pubKey && (
-            <>
-              <h3 style={{ color: '#a78bfa', marginTop: '28px', fontSize: '16px', borderBottom: '1px solid #374151', paddingBottom: '8px' }}>Your Wallet Live Transactions</h3>
-              <div style={{ maxHeight: '220px', overflowY: 'auto', marginTop: '10px' }}>
-                {transactions.length === 0 ? <p style={{ color: '#6b7280', fontSize: '12px' }}>No transactions found for this account.</p> : (
-                  <ul style={{ padding: 0, listStyle: 'none', margin: 0 }}>
-                    {transactions.map((tx, idx) => (
-                      <li key={idx} style={{ padding: '12px', backgroundColor: '#111827', borderRadius: '8px', marginBottom: '8px', border: '1px solid #374151', fontSize: '12px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', color: '#9ca3af' }}>
-                          <span>⏱ {new Date(tx.created_at).toLocaleTimeString()}</span>
-                          <span style={{ color: '#34d399', fontWeight: 'bold' }}>Fee: {tx.fee_charged} stroops</span>
-                        </div>
-                        <div style={{ backgroundColor: 'rgba(0,0,0,0.3)', padding: '6px', borderRadius: '4px', fontFamily: 'monospace', color: '#cbd5e1', wordBreak: 'break-all', marginBottom: '8px' }}>
-                          {`${tx.id.slice(0, 10)}...${tx.id.slice(-10)}`}
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button 
-                            onClick={() => handleCopyTxHash(tx.id, idx)}
-                            style={{ flex: 1, padding: '6px', backgroundColor: '#1f2937', border: '1px solid #4b5563', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
-                          >
-                            {copiedTxIndex === idx ? '📋 Copied Hash!' : '🗐 Copy Hash'}
-                          </button>
-                          <a 
-                            href={`https://stellar.expert/explorer/testnet/tx/${tx.id}`} 
-                            target="_blank" 
-                            rel="noreferrer" 
-                            style={{ flex: 1, padding: '6px', backgroundColor: '#7c3aed', color: '#fff', borderRadius: '4px', textDecoration: 'none', textAlign: 'center', fontSize: '11px', fontWeight: 'bold', display: 'block' }}
-                          >
-                            🔍 Open Explorer
-                          </a>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </>
-          )}
-
-        </div>
-
-        {/* 🔍 Smart Contract ID Decoder Search Section */}
-        <div style={{ maxWidth: '500px', margin: '20px auto', padding: '32px', backgroundColor: '#1f2937', borderRadius: '12px', textAlign: 'left', border: '1px solid #374151' }}>
-          <h2 style={{ color: '#a78bfa', marginBottom: '4px', fontSize: '20px' }}>🔍 Inspect Feedback by ID</h2>
-          <p style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '20px' }}>Input any numeric feedback ID below to fetch and decode the text entry stored in the contract ledger.</p>
-
-          <form onSubmit={handleSearchId} style={{ display: 'flex', gap: '8px' }}>
-            <input 
-              type="number" 
-              placeholder="Enter Feedback ID (e.g. 1)" 
-              value={searchId} 
-              onChange={(e) => setSearchId(e.target.value)} 
-              required 
-              style={{ flex: 1, padding: '12px', borderRadius: '6px', backgroundColor: '#111827', color: '#fff', border: '1px solid #374151', fontSize: '13px' }} 
-            />
-            <button type="submit" disabled={searchLoading} style={{ padding: '0 20px', borderRadius: '6px', backgroundColor: '#7c3aed', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>
-              {searchLoading ? 'Fetching...' : 'Search'}
-            </button>
-          </form>
-
-          {searchResult && (
-            <div style={{ marginTop: '20px', padding: '16px', backgroundColor: '#111827', borderRadius: '8px', border: '1px solid #34d399' }}>
-              <span style={{ fontSize: '11px', color: '#34d399', fontWeight: 'bold', backgroundColor: 'rgba(52, 211, 153, 0.1)', padding: '2px 6px', borderRadius: '4px' }}>✓ ON-CHAIN DATA EXTRACTED</span>
-              
-              <div style={{ marginTop: '12px' }}>
-                <span style={{ color: '#9ca3af', fontSize: '12px', display: 'block' }}>Feedback ID:</span>
-                <strong style={{ color: '#f59e0b', fontSize: '16px' }}>#{searchResult.id}</strong>
-              </div>
-
-              <div style={{ marginTop: '12px' }}>
-                <span style={{ color: '#9ca3af', fontSize: '12px', display: 'block' }}>User / Handle:</span>
-                <strong style={{ color: '#fff', fontSize: '16px' }}>{searchResult.name}</strong>
-              </div>
-
-              <div style={{ marginTop: '12px' }}>
-                <span style={{ color: '#9ca3af', fontSize: '12px', display: 'block' }}>Feedback Content:</span>
-                <div style={{ color: '#d1d5db', fontSize: '14px', backgroundColor: '#1f2937', padding: '10px', borderRadius: '6px', marginTop: '4px', borderLeft: '3px solid #7c3aed' }}>
-                  {searchResult.message}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Multi-Wallet Modal Component */}
-        {isModalOpen && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-            <div style={{ backgroundColor: '#1f2937', padding: '32px', borderRadius: '12px', width: '90%', maxWidth: '400px', border: '1px solid #374151', textAlign: 'center' }}>
-              <h3 style={{ color: '#fff', marginBottom: '4px' }}>Select a Wallet</h3>
-              <p style={{ color: '#9ca3af', fontSize: '12px', marginBottom: '20px' }}>Connect with Soroban testnet parameters</p>
-              <button onClick={handleConnectFreighter} style={{ width: '100%', padding: '12px', backgroundColor: '#111827', color: '#fff', border: '1px solid #4b5563', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '8px' }}>Freighter Wallet</button>
-              <button onClick={() => setIsModalOpen(false)} style={{ width: '100%', padding: '10px', backgroundColor: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>Close Window</button>
-            </div>
-          </div>
-        )}
-        {/* Success Tx Hash Notification */}
-        {txHash && (
-          <div style={{ maxWidth: '500px', margin: '10px auto', padding: '12px', backgroundColor: '#065f46', borderRadius: '6px', color: '#a7f3d0', fontSize: '14px', wordBreak: 'break-all', textAlign: 'left' }}>
-            🎉 Transaction Successful! Hash: {txHash}
-          </div>
-        )}
-        {/* Error notification display */}
-        <div style={{ maxWidth: '500px', margin: '10px auto' }}>
-          {error && <div style={{ padding: '12px', backgroundColor: '#7f1d1d', borderRadius: '6px', color: '#fca5a5', fontSize: '14px', marginBottom: '10px' }}>{error}</div>}
-        </div>
-
+        </main>
       </pubKeyData.Provider>
+
+      <WalletModal
+        open={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onConnectFreighter={handleConnectFreighter}
+        connecting={connecting}
+      />
     </div>
   );
 }
 
 export default App;
-export { pubKeyData };

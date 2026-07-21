@@ -1,3 +1,46 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  /* Dark crypto theme - Banzaan */
+  --background: 220 23% 5%;
+  --foreground: 220 25% 95%;
+  --card: 221 20% 9%;
+  --card-foreground: 220 25% 95%;
+  --primary: 41 92% 57%;
+  --primary-foreground: 220 23% 5%;
+  --accent: 160 66% 50%;
+  --accent-foreground: 220 23% 5%;
+  --muted: 220 15% 14%;
+  --muted-foreground: 219 14% 62%;
+  --border: 219 16% 17%;
+  --destructive: 0 84% 66%;
+  --destructive-foreground: 220 23% 5%;
+}
+
+html {
+  background-color: hsl(var(--background));
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, sans-serif;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Slim dark scrollbars for panels */
+.scroll-slim::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll-slim::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 9999px;
+}
